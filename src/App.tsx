@@ -151,8 +151,8 @@ export default function App() {
 
   return (
     <div className="h-screen p-6 max-w-[1400px] mx-auto flex flex-col gap-4">
-      <header className="shrink-0 rounded-lg bg-panel/40 px-4 py-3
-                         flex items-start justify-between gap-4">
+      <header className="shrink-0 rounded-lg bg-panel border border-surface/60
+                         px-4 py-3 flex items-start justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
           <button
             type="button"
@@ -227,8 +227,8 @@ export default function App() {
 
       <StatusBar text={status.text} tone={status.tone} />
 
-      <footer className="shrink-0 rounded-lg bg-panel/40 px-4 py-2
-                         flex flex-wrap items-center justify-between
+      <footer className="shrink-0 rounded-lg bg-panel border border-surface/60
+                         px-4 py-2 flex flex-wrap items-center justify-between
                          gap-x-8 gap-y-1 text-xs text-muted">
         <span>stack: Tauri 2 + React + TS + Tailwind</span>
 
