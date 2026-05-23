@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Lock } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
 import { ScannerControls } from "./components/ScannerControls";
 import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
@@ -12,9 +14,16 @@ import {
   type ScanRow,
   type Verdict,
 } from "./lib/tauri";
-import { loadIdentity, type Identity } from "./lib/nostr";
+import { loadIdentity, shortNpub, type Identity } from "./lib/nostr";
 
 const DEFAULT_ROOT = "/data/music";
+const THEME_KEY = "afqc-tauri.theme";
+type Theme = "fizx" | "upleb";
+
+function loadTheme(): Theme {
+  const v = localStorage.getItem(THEME_KEY);
+  return v === "upleb" ? "upleb" : "fizx";
+}
 
 export default function App() {
   const [report, setReport] = useState<ScanReport | null>(null);
@@ -24,6 +33,19 @@ export default function App() {
     { text: "ready", tone: "muted" },
   );
   const [identity, setIdentity] = useState<Identity | null>(null);
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  // Apply + persist theme.
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-upleb", theme === "upleb");
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  // Resolve app version once.
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion(null));
+  }, []);
 
   // Hydrate the local nsec on mount.
   useEffect(() => {
@@ -86,12 +108,35 @@ export default function App() {
 
   return (
     <div className="h-screen p-6 max-w-[1400px] mx-auto flex flex-col gap-4">
-      <header className="shrink-0">
-        <h1 className="text-3xl font-bold text-accent tracking-tight">
-          FLAC<span className="text-fg"> Library Browser</span>
-        </h1>
-        <p className="text-sm text-muted mt-1">
-          spectral high-frequency analysis · flag lossy-source FLAC files ·
+      <header className="shrink-0 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === "fizx" ? "upleb" : "fizx"))}
+            title={
+              theme === "fizx"
+                ? "Theme: fizx.uk — click to switch to upleb.uk"
+                : "Theme: upleb.uk — click to switch to fizx.uk"
+            }
+            aria-label="Switch colour theme"
+            className="text-3xl font-bold text-accent tracking-tight
+                       leading-none shrink-0 cursor-pointer transition-opacity
+                       hover:opacity-70"
+          >
+            FLAC<span className="text-fg"> Library Browser</span>
+          </button>
+          {appVersion && (
+            <span
+              className="hidden md:inline-flex items-center px-2.5 py-2
+                         rounded-md bg-surface text-mauve font-mono text-xs
+                         shrink-0"
+            >
+              v{appVersion}
+            </span>
+          )}
+        </div>
+        <p className="text-sm text-muted mt-1 text-right hidden md:block">
+          spectral high-frequency analysis<br />
           peak above 16&nbsp;kHz heuristic
         </p>
       </header>
@@ -137,8 +182,23 @@ export default function App() {
 
       <StatusBar text={status.text} tone={status.tone} />
 
-      <footer className="text-xs text-muted shrink-0">
+      <footer className="shrink-0 flex flex-wrap items-center justify-between
+                         gap-x-8 gap-y-1 text-xs text-muted">
         <span>stack: Tauri 2 + React + TypeScript + Tailwind · matches smpl-tool / ndisc</span>
+        {identity && (
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <span className="font-mono text-mauve" title={identity.npub}>
+              {shortNpub(identity.npub)}
+            </span>
+            <span
+              className="inline-flex items-center gap-1"
+              title="secret key in browser localStorage (migrating to OS keychain)"
+            >
+              <Lock size={11} />
+              <span>nsec stored locally</span>
+            </span>
+          </span>
+        )}
       </footer>
     </div>
   );
