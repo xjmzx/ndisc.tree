@@ -4,12 +4,25 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import {
+  countFlacFiles,
   onScanProgress,
   saveReport,
   scanLibrary,
+  type FlacCount,
   type ScanProgress,
   type ScanReport,
 } from "../lib/tauri";
+
+// Heuristic for the pre-scan ETA. cpu/2 workers each doing ~ffmpeg
+// startup + decode ≈ 1–2 files/sec; tune by observation if it drifts
+// from real-world scans.
+const FILES_PER_SEC = 8;
+
+type State =
+  | { kind: "idle" }
+  | { kind: "counting" }
+  | { kind: "confirming"; count: FlacCount }
+  | { kind: "scanning" };
 
 interface ScannerControlsProps {
   root: string;
@@ -18,23 +31,38 @@ interface ScannerControlsProps {
   onStatus: (s: { text: string; tone: "muted" | "warn" | "ok" | "alert" }) => void;
 }
 
+function formatBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} KB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatEta(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60} min`;
+}
+
 export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerControlsProps) {
-  const [scanning, setScanning] = useState(false);
+  const [state, setState] = useState<State>({ kind: "idle" });
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
 
-  // Ctrl+R rescans (matches the Tk app's shortcut).
+  // Ctrl+R triggers the count step (matches the Tk app's shortcut).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === "r") {
         e.preventDefault();
-        startScan();
+        requestScan();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, scanning]);
+  }, [root, state.kind]);
 
   async function browse() {
     const picked = await openDialog({
@@ -46,9 +74,31 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
     if (typeof picked === "string") setRoot(picked);
   }
 
+  async function requestScan() {
+    if (state.kind !== "idle" || !root.trim()) return;
+    setState({ kind: "counting" });
+    onStatus({ text: "counting files…", tone: "warn" });
+    try {
+      const count = await countFlacFiles(root.trim());
+      if (count.fileCount === 0) {
+        setState({ kind: "idle" });
+        onStatus({ text: `no .flac files under ${root.trim()}`, tone: "alert" });
+        return;
+      }
+      setState({ kind: "confirming", count });
+      onStatus({
+        text: `${count.fileCount.toLocaleString()} files (${formatBytes(count.totalBytes)}) — confirm to scan`,
+        tone: "muted",
+      });
+    } catch (e) {
+      setState({ kind: "idle" });
+      onStatus({ text: `count failed: ${e}`, tone: "alert" });
+    }
+  }
+
   async function startScan() {
-    if (scanning || !root.trim()) return;
-    setScanning(true);
+    if (state.kind !== "confirming") return;
+    setState({ kind: "scanning" });
     setProgress(null);
     onStatus({ text: "starting scan…", tone: "warn" });
 
@@ -65,13 +115,20 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
     } catch (e) {
       onStatus({ text: `scan failed: ${e}`, tone: "alert" });
     } finally {
-      setScanning(false);
+      setState({ kind: "idle" });
       setProgress(null);
       unlistenRef.current?.();
       unlistenRef.current = null;
     }
   }
 
+  function cancelConfirm() {
+    setState({ kind: "idle" });
+    onStatus({ text: "scan cancelled", tone: "muted" });
+  }
+
+  const scanning = state.kind === "scanning";
+  const busy = state.kind !== "idle";
   const pct = progress ? Math.round((100 * progress.done) / Math.max(1, progress.total)) : 0;
 
   return (
@@ -81,9 +138,9 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
           type="text"
           value={root}
           onChange={(e) => setRoot(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && startScan()}
+          onKeyDown={(e) => e.key === "Enter" && requestScan()}
           placeholder="/path/to/music"
-          disabled={scanning}
+          disabled={busy}
           className="flex-1 px-3 py-2 rounded-md bg-surface text-fg
                      placeholder:text-muted outline-none border border-transparent
                      focus:border-accent/50 disabled:opacity-50"
@@ -91,7 +148,7 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
         />
         <button
           onClick={browse}
-          disabled={scanning}
+          disabled={busy}
           className="px-3 py-2 rounded-md bg-surface hover:bg-surfaceHover
                      text-fg disabled:opacity-50 disabled:cursor-not-allowed
                      flex items-center gap-1.5"
@@ -101,8 +158,8 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
           Browse
         </button>
         <button
-          onClick={startScan}
-          disabled={scanning || !root.trim()}
+          onClick={requestScan}
+          disabled={busy || !root.trim()}
           className={cn(
             "px-3 py-2 rounded-md font-semibold",
             "flex items-center gap-1.5",
@@ -111,10 +168,39 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
           )}
           title="Re-scan (Ctrl+R)"
         >
-          <RefreshCw size={14} className={scanning ? "animate-spin" : ""} />
-          {scanning ? "scanning…" : "Re-scan"}
+          <RefreshCw size={14} className={state.kind === "counting" || scanning ? "animate-spin" : ""} />
+          {state.kind === "counting"
+            ? "counting…"
+            : scanning
+              ? "scanning…"
+              : "Re-scan"}
         </button>
       </div>
+
+      {state.kind === "confirming" && (
+        <div className="rounded-md bg-bg/50 px-3 py-2.5 space-y-2 text-xs">
+          <div className="text-fg">
+            <span className="font-semibold">{state.count.fileCount.toLocaleString()}</span> FLAC
+            files · <span className="font-semibold">{formatBytes(state.count.totalBytes)}</span> ·
+            estimated <span className="font-semibold">~{formatEta(Math.ceil(state.count.fileCount / FILES_PER_SEC))}</span>
+            <span className="text-muted"> ({FILES_PER_SEC} files/sec heuristic)</span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={startScan}
+              className="px-3 py-1.5 rounded-md bg-accent text-bg font-semibold hover:opacity-90 text-xs"
+            >
+              Start scan
+            </button>
+            <button
+              onClick={cancelConfirm}
+              className="px-3 py-1.5 rounded-md bg-surface hover:bg-surfaceHover text-fg text-xs"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {scanning && (
         <div className="space-y-1.5">

@@ -37,11 +37,20 @@ export interface ScanProgress {
   verdict: Verdict;
 }
 
+export interface FlacCount {
+  fileCount: number;
+  totalBytes: number;
+}
+
 export async function scanLibrary(
   root: string,
   workers?: number,
 ): Promise<ScanReport> {
   return invoke<ScanReport>("scan_library", { root, workers: workers ?? null });
+}
+
+export async function countFlacFiles(root: string): Promise<FlacCount> {
+  return invoke<FlacCount>("count_flac_files", { root });
 }
 
 export async function loadReport(): Promise<ScanReport | null> {

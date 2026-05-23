@@ -171,6 +171,46 @@ fn classify(path: &Path, vol_re: &Regex) -> ScanRow {
 
 // ---- commands ---------------------------------------------------------
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlacCount {
+    file_count: usize,
+    total_bytes: u64,
+}
+
+#[tauri::command]
+async fn count_flac_files(root: String) -> Result<FlacCount, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root_pb = PathBuf::from(&root);
+        if !root_pb.is_dir() {
+            return Err(format!("not a directory: {root}"));
+        }
+        let mut file_count = 0usize;
+        let mut total_bytes = 0u64;
+        for entry in WalkDir::new(&root_pb).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let is_flac = entry
+                .path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("flac"))
+                .unwrap_or(false);
+            if !is_flac {
+                continue;
+            }
+            file_count += 1;
+            if let Ok(meta) = entry.metadata() {
+                total_bytes = total_bytes.saturating_add(meta.len());
+            }
+        }
+        Ok(FlacCount { file_count, total_bytes })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn scan_library(
     root: String,
@@ -290,6 +330,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_library,
+            count_flac_files,
             load_report,
             save_report,
             open_folder
