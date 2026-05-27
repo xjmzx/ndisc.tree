@@ -7,6 +7,7 @@ import { ScannerControls } from "./components/ScannerControls";
 import { SamplerPanel } from "./components/SamplerPanel";
 import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
+import { OperationOutput, type MirrorState } from "./components/OperationOutput";
 import { PublishSampleDialog } from "./components/PublishSampleDialog";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { FeedPanel } from "./components/FeedPanel";
@@ -19,6 +20,7 @@ import {
   sampleTracks,
   scanSampleDest,
   type SampleProgress,
+  type ScanProgress,
   type ScanReport,
   type ScanRow,
   type Verdict,
@@ -45,11 +47,13 @@ const WORKSPACE_DEST_KEY = "afqc-tauri.workspace.dest";
 // the footer indicator. Rust's REACTION_RELAYS still has its own copy
 // — wiring relays through publish_reaction/delete_reaction is part of
 // the same follow-up.
-const DEFAULT_RELAYS = [
-  "wss://relay.fizx.uk",
-  "wss://nos.lol",
-  "wss://relay.primal.net",
-];
+// Relay set the app uses for both publishing kind:1063 and the read
+// surfaces (FeedPanel single-WS subscription, profile fetch). Composed
+// from one editable slot (default `wss://relay.fizx.uk`, persisted)
+// and two locked secondaries (matches the suite-wide trio).
+const DEFAULT_PUBLISH_RELAY = "wss://relay.fizx.uk";
+const PUBLISH_RELAY_KEY = "afqc-tauri.publish.relay";
+const SECONDARY_RELAYS = ["wss://nos.lol", "wss://relay.primal.net"];
 const PROFILE_RELAYS = ["wss://relay.fizx.uk"];
 type Theme = "fizx" | "upleb";
 
@@ -79,6 +83,16 @@ export default function App() {
   const [root, setRoot] = usePersistedString(SCANNER_ROOT_KEY, DEFAULT_ROOT);
   // Shared destination — see WORKSPACE_DEST_KEY comment.
   const [workspaceDest, setWorkspaceDest] = usePersistedString(WORKSPACE_DEST_KEY, "");
+  // Editable first relay (publishRelay), joined with SECONDARY_RELAYS
+  // to form the effective trio used across the app.
+  const [publishRelay, setPublishRelay] = usePersistedString(
+    PUBLISH_RELAY_KEY,
+    DEFAULT_PUBLISH_RELAY,
+  );
+  const relays = useMemo(
+    () => [publishRelay.trim() || DEFAULT_PUBLISH_RELAY, ...SECONDARY_RELAYS],
+    [publishRelay],
+  );
   const [filter, setFilter] = useState<FilterState>({
     verdict: "All",
     search: "",
@@ -114,6 +128,16 @@ export default function App() {
   // Row pending a "publish to Nostr" click — when non-null the dialog
   // overlays the UI; on close (cancel or success) we reset to null.
   const [publishTarget, setPublishTarget] = useState<ScanRow | null>(null);
+
+  // Lifted state for the shared OperationOutput strip below the three
+  // operation panels. Each panel emits its own live state up via a
+  // setter callback; the strip renders whichever op is active.
+  const [scanState, setScanState] = useState<{
+    active: boolean;
+    progress: ScanProgress | null;
+    cancelling: boolean;
+  }>({ active: false, progress: null, cancelling: false });
+  const [mirrorState, setMirrorState] = useState<MirrorState>({ kind: "idle" });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Track the current object URL so we can revoke it when playback ends
@@ -479,10 +503,13 @@ export default function App() {
       </header>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] gap-4 items-stretch">
-        {/* Left column: scanner+mirror-tree top sub-row, then sampler /
-            filters / library tree (tree fills remaining height) */}
+        {/* Left column: three operation panels in a top sub-row
+            (Scanner | Mirror tree | Destination/Sampler), then filters /
+            library tree (tree fills remaining height). Each panel still
+            owns its own progress strip — door open to lift them into a
+            shared output area later (Option B). */}
         <div className="flex flex-col gap-4 min-w-0 min-h-0">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <ScannerControls
               root={root}
               setRoot={setRoot}
@@ -491,6 +518,7 @@ export default function App() {
                 setRoot(r.root);
               }}
               onStatus={setStatus}
+              onScanState={setScanState}
             />
             <WorkspacePanel
               rows={filteredRows}
@@ -499,17 +527,24 @@ export default function App() {
               dest={workspaceDest}
               setDest={setWorkspaceDest}
               onStatus={setStatus}
+              onMirrorState={setMirrorState}
+            />
+            <SamplerPanel
+              rows={filteredRows}
+              dest={workspaceDest}
+              setDest={setWorkspaceDest}
+              sampling={sampling}
+              onSample={(tracks) =>
+                runSample(anyFilter ? "filtered library" : "full library", tracks)
+              }
+              onCancelSample={stopSample}
             />
           </div>
-          <SamplerPanel
-            rows={filteredRows}
-            dest={workspaceDest}
-            setDest={setWorkspaceDest}
+          <OperationOutput
+            scan={scanState}
+            mirror={mirrorState}
             sampling={sampling}
-            onSample={(tracks) =>
-              runSample(anyFilter ? "filtered library" : "full library", tracks)
-            }
-            onCancelSample={stopSample}
+            samplingCancelling={sampleCancelledRef.current}
           />
           <Filters
             filter={filter}
@@ -538,9 +573,11 @@ export default function App() {
           <NostrPanel
             identity={identity}
             setIdentity={setIdentity}
-            relays={DEFAULT_RELAYS}
+            publishRelay={publishRelay}
+            setPublishRelay={setPublishRelay}
+            defaultPublishRelay={DEFAULT_PUBLISH_RELAY}
           />
-          <FeedPanel identity={identity} relays={DEFAULT_RELAYS} />
+          <FeedPanel identity={identity} relays={relays} />
         </div>
       </div>
 
@@ -579,20 +616,25 @@ export default function App() {
           </span>
         )}
 
-        {/* Relay indicator — small chip on the right of the footer,
-            replacing the prior scan-info span. Currently mirrors the
-            hardcoded constant; an editable + persisted list lives in the
-            follow-up scope (see DEFAULT_RELAYS comment). */}
+        {/* Relay indicator — first host is the user-editable publish
+            relay (defaults to wss://relay.fizx.uk), the other two are
+            locked secondaries. Tooltip shows the full ws:// URLs. */}
         <span
-          className="inline-flex items-center gap-1.5 font-mono"
-          title={DEFAULT_RELAYS.map((r) => r.replace(/^wss:\/\//, "")).join("\n")}
+          className="inline-flex items-center gap-1.5 font-mono min-w-0"
+          title={relays.map((r) => r).join("\n")}
         >
-          <Radio size={11} className="opacity-70" />
-          <span>
-            {DEFAULT_RELAYS[0].replace(/^wss:\/\//, "")}
-            {DEFAULT_RELAYS.length > 1 && (
-              <span className="text-muted/70"> +{DEFAULT_RELAYS.length - 1}</span>
-            )}
+          <Radio size={11} className="opacity-70 shrink-0" />
+          <span className="truncate">
+            <span className="text-fg/80">
+              {relays[0].replace(/^wss:\/\//, "")}
+            </span>
+            <span className="text-muted/70">
+              {" · "}
+              {relays
+                .slice(1)
+                .map((r) => r.replace(/^wss:\/\//, ""))
+                .join(" · ")}
+            </span>
           </span>
         </span>
       </footer>
@@ -602,7 +644,7 @@ export default function App() {
           row={publishTarget}
           libRoot={libRoot}
           workspaceDest={workspaceDest}
-          relays={[...DEFAULT_RELAYS]}
+          relays={relays}
           identityNpub={identity?.npub ?? null}
           onClose={() => {
             setPublishTarget(null);

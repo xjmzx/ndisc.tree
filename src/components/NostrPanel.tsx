@@ -16,15 +16,22 @@ interface NostrPanelProps {
   identity: Identity | null;
   setIdentity: (i: Identity | null) => void;
   /**
-   * Relay set to publish + read from. Currently sourced from the app-level
-   * constant; the editable + persisted list (smpl-tool-style) is the next
-   * iteration, along with threading these into the Rust publish_reaction
-   * / delete_reaction commands (still hardcoded server-side).
+   * The single relay used when publishing kind:1063 file metadata from
+   * this app. Editable + persisted at the App level. Other Nostr reads
+   * (FeedPanel) still use the broader DEFAULT_RELAYS set for coverage.
    */
-  relays: string[];
+  publishRelay: string;
+  setPublishRelay: (v: string) => void;
+  defaultPublishRelay: string;
 }
 
-export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
+export function NostrPanel({
+  identity,
+  setIdentity,
+  publishRelay,
+  setPublishRelay,
+  defaultPublishRelay,
+}: NostrPanelProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
   const [input, setInput] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -88,8 +95,7 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
 
   return (
     <Section
-      title="Publish"
-      icon={<Radio size={16} />}
+      icon={<Radio size={16} aria-label="Publish" />}
       onTitleClick={() => setExpanded(!expanded)}
     >
       {expanded && (
@@ -160,19 +166,24 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
 
       <div>
         <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
-          Relays
+          Publish relay
         </div>
-        <ul className="rounded-md bg-bg/50 px-2.5 py-1.5 space-y-0.5">
-          {relays.map((r) => (
-            <li key={r} className="flex items-center gap-2 text-xs font-mono">
-              <Radio size={10} className="text-muted shrink-0" />
-              <span className="text-fg/90 truncate">
-                {r.replace(/^wss:\/\//, "")}
-              </span>
-            </li>
-          ))}
-        </ul>
-        <p className="text-[10px] text-muted mt-1">Read-only.</p>
+        <div className="flex items-center gap-2 rounded-md bg-bg/50 px-2.5 py-1.5">
+          <Radio size={10} className="text-muted shrink-0" />
+          <input
+            type="text"
+            value={publishRelay}
+            onChange={(e) => setPublishRelay(e.target.value)}
+            onBlur={() => {
+              // Fall back to the default if the user cleared it — we
+              // always want a populated value so the publish path can't
+              // silently no-op.
+              if (!publishRelay.trim()) setPublishRelay(defaultPublishRelay);
+            }}
+            spellCheck={false}
+            className="flex-1 bg-transparent text-fg/90 text-xs font-mono outline-none"
+          />
+        </div>
       </div>
 
       {backupNsec && (
@@ -206,10 +217,6 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
         </div>
       )}
 
-      <p className="text-xs text-muted leading-relaxed">
-        Publish sample clips from the library via the per-track upload
-        action; nsec stays in the OS keychain.
-      </p>
         </>
       )}
     </Section>

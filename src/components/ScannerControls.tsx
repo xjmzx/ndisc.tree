@@ -33,13 +33,23 @@ interface ScannerControlsProps {
   setRoot: (s: string) => void;
   onReport: (r: ScanReport) => void;
   onStatus: (s: { text: string; tone: "muted" | "warn" | "ok" | "alert" }) => void;
+  /**
+   * Lifts the live scan state up so the shared OperationOutput strip
+   * can render the progress. Called whenever progress/cancelling/active
+   * change; idle state is `{ active: false, progress: null, cancelling: false }`.
+   */
+  onScanState?: (s: {
+    active: boolean;
+    progress: ScanProgress | null;
+    cancelling: boolean;
+  }) => void;
 }
 
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} KB`;
   if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
-  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+  return `${(b / 1024 ** 3).toFixed(1)} GB`;
 }
 
 function formatEta(seconds: number): string {
@@ -50,7 +60,7 @@ function formatEta(seconds: number): string {
   return `${h}h ${m % 60} min`;
 }
 
-export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerControlsProps) {
+export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState }: ScannerControlsProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
   const [state, setState] = useState<State>({ kind: "idle" });
   const [progress, setProgress] = useState<ScanProgress | null>(null);
@@ -161,7 +171,11 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
 
   const scanning = state.kind === "scanning";
   const busy = state.kind !== "idle";
-  const pct = progress ? Math.round((100 * progress.done) / Math.max(1, progress.total)) : 0;
+
+  // Emit live scan state to the shared output strip in the parent.
+  useEffect(() => {
+    onScanState?.({ active: scanning, progress, cancelling });
+  }, [scanning, progress, cancelling, onScanState]);
 
   return (
     <Section
@@ -189,11 +203,11 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
           disabled={busy}
           className="px-3 py-2 rounded-md bg-surface hover:bg-surfaceHover
                      text-fg disabled:opacity-50 disabled:cursor-not-allowed
-                     flex items-center gap-1.5"
+                     flex items-center justify-center"
           title="Browse for folder"
+          aria-label="Browse for folder"
         >
           <FolderOpen size={14} />
-          Browse
         </button>
         {scanning ? (
           <button
@@ -201,14 +215,14 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
             disabled={cancelling}
             className={cn(
               "px-3 py-2 rounded-md font-semibold",
-              "flex items-center gap-1.5",
+              "flex items-center justify-center",
               "disabled:opacity-50 disabled:cursor-not-allowed",
               "bg-alert/15 text-alert hover:bg-alert hover:text-bg transition-colors",
             )}
-            title="Stop scan — in-flight files finish, no new ones start"
+            title={cancelling ? "cancelling…" : "Stop scan — in-flight files finish, no new ones start"}
+            aria-label={cancelling ? "Cancelling scan" : "Stop scan"}
           >
             <Square size={14} className={cancelling ? "animate-pulse" : ""} />
-            {cancelling ? "cancelling…" : "Stop"}
           </button>
         ) : (
           <button
@@ -216,14 +230,14 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
             disabled={busy || !root.trim()}
             className={cn(
               "px-3 py-2 rounded-md font-semibold",
-              "flex items-center gap-1.5",
+              "flex items-center justify-center",
               "disabled:opacity-50 disabled:cursor-not-allowed",
               "bg-accent text-bg hover:opacity-90",
             )}
-            title="Re-scan (Ctrl+R)"
+            title={state.kind === "counting" ? "Counting files…" : "Re-scan (Ctrl+R)"}
+            aria-label="Re-scan library"
           >
             <RefreshCw size={14} className={state.kind === "counting" ? "animate-spin" : ""} />
-            {state.kind === "counting" ? "counting…" : "Re-scan"}
           </button>
         )}
       </div>
@@ -231,10 +245,10 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
       {state.kind === "confirming" && (
         <div className="rounded-md bg-bg/50 px-3 py-2.5 space-y-2 text-xs">
           <div className="text-fg">
-            <span className="font-semibold">{state.count.fileCount.toLocaleString()}</span> FLAC
-            files · <span className="font-semibold">{formatBytes(state.count.totalBytes)}</span> ·
-            estimated <span className="font-semibold">~{formatEta(Math.ceil(state.count.fileCount / FILES_PER_SEC))}</span>
-            <span className="text-muted"> ({FILES_PER_SEC} files/sec heuristic)</span>
+            <span className="font-semibold">{state.count.fileCount.toLocaleString()}</span> FLAC ·{" "}
+            <span className="font-semibold">{formatBytes(state.count.totalBytes)}</span> ·
+            est. <span className="font-semibold">~{formatEta(Math.ceil(state.count.fileCount / FILES_PER_SEC))}</span>
+            <span className="text-muted"> ({FILES_PER_SEC} files/sec)</span>
           </div>
           <div className="flex gap-2">
             <button
@@ -253,22 +267,6 @@ export function ScannerControls({ root, setRoot, onReport, onStatus }: ScannerCo
         </div>
       )}
 
-      {scanning && (
-        <div className="mt-3 space-y-1.5">
-          <div className="text-xs text-muted font-mono truncate">
-            {progress
-              ? `${progress.done.toLocaleString()} / ${progress.total.toLocaleString()} · ${progress.path}`
-              : "discovering files…"}
-          </div>
-          <div className="h-px bg-muted/40" />
-          <div className="h-0.5 rounded-full bg-bg/60 overflow-hidden">
-            <div
-              className="h-full bg-accent transition-[width] duration-150"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-        </div>
-      )}
         </>
       )}
     </Section>

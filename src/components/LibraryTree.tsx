@@ -5,6 +5,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Disc,
+  FileAudio,
   FolderTree,
   Pause,
   Play,
@@ -77,6 +78,29 @@ function countsFor(tracks: TrackRow[]): Record<Verdict, number> {
   };
   for (const t of tracks) c[t.verdict]++;
   return c;
+}
+
+/**
+ * Zero-padded numeric display where the leading zeros are dimmed to
+ * `text-muted/40` and the significant digits use `text-fg` (white).
+ * Used for both the album-count slot (width=3 → "001") and the
+ * track-count slot (width=4 → "0042"). Keeps the columns visually
+ * tidy across rows while letting the eye snap to the actual figure.
+ */
+function PaddedNum({ n, w }: { n: number; w: number }) {
+  const s = String(n).padStart(w, "0");
+  const i = s.search(/[1-9]/);
+  if (i < 0) {
+    // All zeros — value is 0; render full width muted so the slot
+    // still occupies space and aligns with neighbours.
+    return <span className="text-muted/40">{s}</span>;
+  }
+  return (
+    <>
+      {i > 0 && <span className="text-muted/40">{s.slice(0, i)}</span>}
+      <span className="text-fg">{s.slice(i)}</span>
+    </>
+  );
 }
 
 /**
@@ -286,17 +310,31 @@ export function LibraryTree({
                 >
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span className="flex-1 truncate">{artist.name}</span>
-                  <span className="text-xs text-muted font-normal flex items-center gap-2 shrink-0">
+                  {/*
+                    Fixed-width digit slots — album count zero-padded to
+                    3, track count to 4. Leading zeros dimmed; significant
+                    digits white. Disc icon and tiny file icon flank the
+                    bar so it's clear what each number counts.
+                  */}
+                  <span className="text-xs text-muted font-normal flex items-center gap-2 shrink-0 tabular-nums">
                     <span
-                      className="inline-flex items-center gap-1 tabular-nums"
+                      className="inline-flex items-center gap-1"
                       title={`${artist.albums.length} release${artist.albums.length === 1 ? "" : "s"}`}
                     >
-                      {artist.albums.length}
+                      <span className="w-6 text-right">
+                        <PaddedNum n={artist.albums.length} w={3} />
+                      </span>
                       <Disc size={11} aria-hidden />
                     </span>
                     <VerdictBar counts={ac} total={artist.totalTracks} />
-                    <span className="tabular-nums">
-                      {artist.totalTracks}
+                    <span
+                      className="inline-flex items-center gap-1"
+                      title={`${artist.totalTracks.toLocaleString()} track${artist.totalTracks === 1 ? "" : "s"}`}
+                    >
+                      <span className="w-8 text-right">
+                        <PaddedNum n={artist.totalTracks} w={4} />
+                      </span>
+                      <FileAudio size={10} aria-hidden />
                     </span>
                   </span>
                 </button>
@@ -346,13 +384,19 @@ export function LibraryTree({
                         >
                           {alOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                           <span className="flex-1 truncate">{album.name}</span>
-                          <span className="text-xs text-muted not-italic flex items-center gap-2 shrink-0">
+                          <span className="text-xs text-muted not-italic flex items-center gap-2 shrink-0 tabular-nums">
                             <VerdictBar
                               counts={albumCounts}
                               total={album.tracks.length}
                             />
-                            <span className="tabular-nums">
-                              {album.tracks.length}
+                            <span
+                              className="inline-flex items-center gap-1"
+                              title={`${album.tracks.length.toLocaleString()} track${album.tracks.length === 1 ? "" : "s"}`}
+                            >
+                              <span className="w-8 text-right">
+                                <PaddedNum n={album.tracks.length} w={4} />
+                              </span>
+                              <FileAudio size={10} aria-hidden />
                             </span>
                           </span>
                         </button>

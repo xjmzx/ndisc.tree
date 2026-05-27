@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   Headphones,
+  Heart,
   Loader2,
   RefreshCw,
   Search,
-  ThumbsDown,
-  ThumbsUp,
   User,
   UserCheck,
 } from "lucide-react";
 import { nip19 } from "nostr-tools";
+import { AudioPlayer } from "./AudioPlayer";
 import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import { type Identity, shortNpub } from "../lib/nostr";
@@ -65,6 +66,45 @@ function formatBytes(b: number | null): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 ** 2) return `${(b / 1024).toFixed(0)} KB`;
   return `${(b / 1024 ** 2).toFixed(1)} MB`;
+}
+
+/** Tight title cap — 12 chars + ".." to keep feed rows scannable. */
+function shortTitle(s: string, max: number = 12): string {
+  return s.length > max ? s.slice(0, max) + ".." : s;
+}
+
+/**
+ * Copyable npub chip. Renders the literal text "npub" — click to copy
+ * the full bech32 to the clipboard, briefly flashes a check. The
+ * abbreviated `npub1d4t…xk7d` form moves to the tooltip.
+ */
+function NpubChip({ npub }: { npub: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(npub);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard denied */
+    }
+  }
+  return (
+    <button
+      onClick={copy}
+      title={copied ? "Copied!" : `${shortNpub(npub)} — click to copy`}
+      className={cn(
+        "inline-flex items-center gap-0.5 font-mono shrink-0",
+        copied
+          ? "text-ok"
+          : "text-accent hover:text-fg",
+      )}
+    >
+      {copied ? <Check size={10} /> : null}
+      npub
+    </button>
+  );
 }
 
 function npubFromHex(hex: string): string {
@@ -221,7 +261,7 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
   const reactions = useReactions(reactionRefs, identity?.pk ?? null, KIND);
 
   return (
-    <Section title="Published" icon={<Headphones size={16} />}>
+    <Section icon={<Headphones size={16} aria-label="Published" />}>
       <div className="flex items-center gap-2 text-xs">
         <span
           className={cn(
@@ -326,25 +366,24 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
             await reactions.react(event.id, REACTION_DOWN);
           };
           return (
-            <li key={event.id} className="p-2.5 space-y-1.5">
+            <li key={event.id} className="px-2 py-1.5 space-y-1">
+              {/* Two-row compact layout: meta + reactions on row 1,
+                  audio element on row 2. Full title moves to tooltip. */}
               <div className="flex items-center gap-2 text-[11px]">
-                <span className="font-mono text-accent truncate">{shortNpub(npub)}</span>
-                <span className="text-muted shrink-0">{relativeTime(event.created_at)}</span>
-                <span className="text-muted shrink-0 ml-auto">
+                <NpubChip npub={npub} />
+                <span className="text-muted shrink-0">
+                  {relativeTime(event.created_at)}
+                </span>
+                <span
+                  className="text-fg/90 truncate flex-1 min-w-0"
+                  title={title || "(untitled)"}
+                >
+                  {shortTitle(title || "(untitled)")}
+                </span>
+                <span className="text-muted shrink-0">
                   {a.mime.replace("audio/", "")}
                   {a.size !== null && ` · ${formatBytes(a.size)}`}
                 </span>
-              </div>
-              <div className="text-xs text-fg/90 break-words line-clamp-2" title={title}>
-                {title || "(untitled)"}
-              </div>
-              <audio
-                controls
-                preload="none"
-                src={a.url}
-                className="w-full h-8"
-              />
-              <div className="flex items-center gap-1 text-[11px]">
                 <button
                   onClick={onUp}
                   disabled={!reactions.canReact || isBusy}
@@ -356,30 +395,37 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
                         : "upvote"
                   }
                   className={cn(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded",
+                    "inline-flex items-center gap-0.5 px-1 py-0.5 rounded shrink-0",
                     "disabled:opacity-40 disabled:cursor-not-allowed",
                     myUp
-                      ? "bg-ok/15 text-ok"
+                      ? "text-ok"
                       : "text-muted hover:text-fg hover:bg-surface/40",
                   )}
                 >
-                  {isBusy ? <Loader2 size={11} className="animate-spin" /> : <ThumbsUp size={11} />}
+                  {isBusy ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <Heart size={11} className={myUp ? "fill-current" : ""} />
+                  )}
                   {displayCount(agg.up)}
                 </button>
                 <button
                   onClick={onDown}
                   disabled={!reactions.canReact || isBusy}
-                  title={!reactions.canReact ? "load a key to react" : "downvote"}
+                  title={
+                    !reactions.canReact ? "load a key to react" : "downvote"
+                  }
                   className={cn(
-                    "inline-flex items-center gap-1 px-2 py-0.5 rounded",
+                    "inline-flex items-center gap-0.5 px-1 py-0.5 rounded shrink-0",
                     "disabled:opacity-40 disabled:cursor-not-allowed",
                     "text-muted hover:text-alert hover:bg-surface/40",
                   )}
                 >
-                  <ThumbsDown size={11} />
+                  <Heart size={11} className="rotate-180" />
                   {displayCount(agg.down)}
                 </button>
               </div>
+              <AudioPlayer src={a.url} />
             </li>
           );
         })}

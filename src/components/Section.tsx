@@ -2,7 +2,8 @@ import { ReactNode } from "react";
 import { cn } from "../lib/cn";
 
 interface SectionProps {
-  title: ReactNode;
+  /** Optional — omit (or pass empty) for icon-only headers. */
+  title?: ReactNode;
   icon?: ReactNode;
   /** Optional right-side header content (chips, mini-controls). */
   right?: ReactNode;
@@ -46,7 +47,9 @@ export function Section({
         )}
       >
         {icon}
-        <h2 className="text-sm tracking-wide uppercase">{title}</h2>
+        {title && (
+          <h2 className="text-sm tracking-wide uppercase">{title}</h2>
+        )}
         {right && <div className="ml-auto text-fg/80">{right}</div>}
       </header>
       {hasBody && (

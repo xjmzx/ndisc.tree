@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FolderOpen, FolderTree, Hammer, ShieldCheck } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
@@ -23,6 +23,16 @@ interface WorkspacePanelProps {
   dest: string;
   setDest: (v: string) => void;
   onStatus: (s: { text: string; tone: "muted" | "warn" | "ok" | "alert" }) => void;
+  /**
+   * Lifts the mirror state (running / done / err) up so the shared
+   * OperationOutput strip can render the result or error. The in-panel
+   * result + error blocks are gone — this is now the only surface.
+   */
+  onMirrorState?: (s: {
+    kind: "idle" | "running" | "done" | "err";
+    result?: MirrorResult;
+    error?: string;
+  }) => void;
 }
 
 export function WorkspacePanel({
@@ -32,10 +42,20 @@ export function WorkspacePanel({
   dest,
   setDest,
   onStatus,
+  onMirrorState,
 }: WorkspacePanelProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
   const [sudo, setSudo] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
+
+  // Emit state changes up so the shared OperationOutput can render
+  // running / result / error from outside the panel.
+  useEffect(() => {
+    if (!onMirrorState) return;
+    if (state.kind === "done") onMirrorState({ kind: "done", result: state.result });
+    else if (state.kind === "err") onMirrorState({ kind: "err", error: state.message });
+    else onMirrorState({ kind: state.kind });
+  }, [state, onMirrorState]);
 
   const pairs = useMemo(() => uniquePairs(rows, libRoot), [rows, libRoot]);
   const artistCount = useMemo(
@@ -89,6 +109,24 @@ export function WorkspacePanel({
       icon={<FolderTree size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
     >
+      {/* Pinned line — visible whether the panel is expanded or collapsed.
+          Same counts that used to live in the secondary row below. */}
+      <div className="text-xs text-fg/80">
+        {pairs.length === 0 ? (
+          <span className="text-muted">scan or clear the filter to mirror</span>
+        ) : (
+          <>
+            <span className="font-semibold">{artistCount.toLocaleString()}</span>{" "}
+            artist{artistCount === 1 ? "" : "s"}
+            {" | "}
+            <span className="font-semibold">{pairs.length.toLocaleString()}</span>{" "}
+            release{pairs.length === 1 ? "" : "s"}
+            {" | "}
+            <span className="font-semibold">{rows.length.toLocaleString()}</span>{" "}
+            {anyFilter ? "filtered " : ""}track{rows.length === 1 ? "" : "s"}
+          </>
+        )}
+      </div>
       {expanded && (
         <>
           <div className="flex gap-2">
@@ -108,56 +146,37 @@ export function WorkspacePanel({
               disabled={running}
               className="px-3 py-2 rounded-md bg-surface hover:bg-surfaceHover
                          text-fg disabled:opacity-50 disabled:cursor-not-allowed
-                         flex items-center gap-1.5"
+                         flex items-center justify-center"
               title="Browse for destination"
+              aria-label="Browse for destination"
             >
               <FolderOpen size={14} />
-              Browse
             </button>
             <button
               onClick={createMirror}
               disabled={!canRun}
               className={cn(
                 "px-3 py-2 rounded-md font-semibold",
-                "flex items-center gap-1.5",
+                "flex items-center justify-center",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
                 "bg-accent text-bg hover:opacity-90",
               )}
               title={
-                pairs.length === 0
-                  ? "Scan or clear the filter first"
-                  : !dest.trim()
-                    ? "Choose a destination directory"
-                    : `Create ${pairs.length} release folder${pairs.length === 1 ? "" : "s"} under ${dest}`
+                running
+                  ? "creating…"
+                  : pairs.length === 0
+                    ? "Scan or clear the filter first"
+                    : !dest.trim()
+                      ? "Choose a destination directory"
+                      : `Create ${pairs.length} release folder${pairs.length === 1 ? "" : "s"} under ${dest}`
               }
+              aria-label="Create mirror tree"
             >
-              <Hammer size={14} />
-              {running ? "creating…" : "Create"}
+              <Hammer size={14} className={running ? "animate-pulse" : ""} />
             </button>
           </div>
 
-          <div className="mt-3 flex items-center justify-between gap-2 flex-wrap text-xs">
-            {pairs.length === 0 ? (
-              <span className="text-muted">
-                scan or clear the filter to mirror
-              </span>
-            ) : (
-              <span className="text-fg/80">
-                <span className="font-semibold">
-                  {artistCount.toLocaleString()}
-                </span>{" "}
-                artist folder{artistCount === 1 ? "" : "s"},{" "}
-                <span className="font-semibold">
-                  {pairs.length.toLocaleString()}
-                </span>{" "}
-                release{pairs.length === 1 ? "" : "s"},{" "}
-                <span className="font-semibold">
-                  {rows.length.toLocaleString()}
-                </span>{" "}
-                {anyFilter ? "filtered " : ""}track
-                {rows.length === 1 ? "" : "s"}
-              </span>
-            )}
+          <div className="flex items-center justify-end text-xs">
             <label
               className={cn(
                 "flex items-center gap-1.5 cursor-pointer select-none",
@@ -181,39 +200,6 @@ export function WorkspacePanel({
             </label>
           </div>
 
-          {state.kind === "done" && (
-            <div className="text-xs space-y-1">
-              <div className="flex gap-3 text-fg">
-                <span className="text-ok">created {state.result.created}</span>
-                <span className="text-muted">
-                  skipped {state.result.skipped}
-                </span>
-                {state.result.errors.length > 0 && (
-                  <span className="text-alert">
-                    {state.result.errors.length} errors
-                  </span>
-                )}
-              </div>
-              {state.result.errors.length > 0 && (
-                <pre
-                  className="text-[10px] text-alert font-mono whitespace-pre-wrap
-                             max-h-32 overflow-auto"
-                >
-                  {state.result.errors.slice(0, 20).join("\n")}
-                  {state.result.errors.length > 20 &&
-                    `\n…and ${state.result.errors.length - 20} more`}
-                </pre>
-              )}
-            </div>
-          )}
-
-          {state.kind === "err" && (
-            <pre
-              className="text-xs text-alert font-mono break-all whitespace-pre-wrap"
-            >
-              {state.message}
-            </pre>
-          )}
         </>
       )}
     </Section>
