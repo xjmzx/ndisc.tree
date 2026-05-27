@@ -52,8 +52,7 @@ export function SamplerPanel({
     >
       {/* Pinned line — visible whether the panel is expanded or collapsed. */}
       <p className="text-xs text-muted">
-        Saves a {SAMPLE_SECS} sec clip (per track in the current filter view) to
-        Mirror Tree.
+        Saves a {SAMPLE_SECS} sec clip from filter to Mirror Tree.
       </p>
       {expanded && (
         <>

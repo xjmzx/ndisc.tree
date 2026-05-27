@@ -15,8 +15,8 @@
   --c-muted: 107 122 141;
   --c-accent: 122 240 205;
   --c-ok: 74 222 128;
-  --c-warn: 251 191 36;
-  --c-alert: 248 113 113;
+  --c-warn: 255 220 50;   /* HSL 50°/100%/60% — vivid amber-yellow, theme-consistent */
+  --c-alert: 255 80 80;   /* HSL 0°/100%/66% — vivid pure red, theme-consistent */
   --c-mauve: 167 139 250;
   --c-auburn: 178 96 58;
 }
@@ -30,8 +30,8 @@
   --c-muted: 107 122 141;
   --c-accent: 255 182 158;
   --c-ok: 74 222 128;
-  --c-warn: 251 191 36;
-  --c-alert: 248 113 113;
+  --c-warn: 255 220 50;   /* must match :root — verdict colours read the same in both themes */
+  --c-alert: 255 80 80;
   --c-mauve: 255 179 71;
   --c-auburn: 178 96 58;
 }

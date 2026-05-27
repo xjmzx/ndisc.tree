@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { KeyRound, Lock, Radio } from "lucide-react";
+import { FolderTree, KeyRound, Lock, Radio } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { SimplePool } from "nostr-tools";
 import { cn } from "./lib/cn";
@@ -9,6 +9,7 @@ import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
 import { OperationOutput, type MirrorState } from "./components/OperationOutput";
 import { PublishSampleDialog } from "./components/PublishSampleDialog";
+import { Section } from "./components/Section";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { FeedPanel } from "./components/FeedPanel";
 import { NostrPanel } from "./components/NostrPanel";
@@ -138,6 +139,15 @@ export default function App() {
     cancelling: boolean;
   }>({ active: false, progress: null, cancelling: false });
   const [mirrorState, setMirrorState] = useState<MirrorState>({ kind: "idle" });
+
+  // Merged Library section's collapse state. When collapsed: filter band
+  // hides AND the tree forces sample="sampled" on top of whatever other
+  // filters the user has set. Hierarchy + expand/collapse-all stay intact.
+  const [libraryExpanded, setLibraryExpanded] = usePersistedString(
+    "afqc-tauri.library.expanded",
+    "1",
+  );
+  const libraryOpen = libraryExpanded === "1";
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Track the current object URL so we can revoke it when playback ends
@@ -375,17 +385,22 @@ export default function App() {
   const filteredRows: ScanRow[] = useMemo(() => {
     if (!report) return [];
     const q = filter.search.trim().toLowerCase();
+    // When the Library section is collapsed, overlay "sampled only" on
+    // top of whatever the user has set. User's sample state is preserved
+    // — restored on expand. Other filter dimensions (verdict, search)
+    // continue to apply.
+    const effectiveSample = libraryOpen ? filter.sample : "sampled";
     return report.rows.filter((r) => {
       if (filter.verdict !== "All" && r.verdict !== filter.verdict) return false;
       if (q && !r.path.toLowerCase().includes(q)) return false;
-      if (filter.sample !== "all") {
+      if (effectiveSample !== "all") {
         const has = sampledSignatures.has(sourceSignature(r.path, libRoot));
-        if (filter.sample === "sampled" && !has) return false;
-        if (filter.sample === "unsampled" && has) return false;
+        if (effectiveSample === "sampled" && !has) return false;
+        if (effectiveSample === "unsampled" && has) return false;
       }
       return true;
     });
-  }, [report, filter, sampledSignatures, libRoot]);
+  }, [report, filter, sampledSignatures, libRoot, libraryOpen]);
 
   const counts = useMemo(() => {
     const c: Record<Verdict, number> = {
@@ -402,7 +417,8 @@ export default function App() {
   const anyFilter =
     filter.verdict !== "All" ||
     filter.search.trim() !== "" ||
-    filter.sample !== "all";
+    filter.sample !== "all" ||
+    !libraryOpen;  // collapsed Library overlays sample="sampled"
 
   return (
     <div className="h-screen p-6 max-w-[1400px] mx-auto flex flex-col gap-4">
@@ -447,10 +463,6 @@ export default function App() {
         */}
         {report && (
           <div className="hidden md:flex flex-col items-center gap-1.5 min-w-[520px] mt-1">
-            <div className="text-xs text-muted font-mono">
-              scan: {report.generated.slice(0, 10)} ·{" "}
-              {report.rows.length.toLocaleString()} files
-            </div>
             {(() => {
               const total = Math.max(1, report.rows.length);
               const seg = (n: number) => (100 * n) / total;
@@ -519,6 +531,7 @@ export default function App() {
               }}
               onStatus={setStatus}
               onScanState={setScanState}
+              report={report}
             />
             <WorkspacePanel
               rows={filteredRows}
@@ -546,26 +559,47 @@ export default function App() {
             sampling={sampling}
             samplingCancelling={sampleCancelledRef.current}
           />
-          <Filters
-            filter={filter}
-            setFilter={setFilter}
-            counts={counts}
-            total={report?.rows.length ?? 0}
-          />
-          <LibraryTree
-            rows={filteredRows}
-            libRoot={libRoot}
-            anyFilter={anyFilter}
-            onOpenStatus={setStatus}
-            onSampleScope={(label, tracks) => runSample(label, tracks)}
-            hasSample={(row) =>
-              sampledSignatures.has(sourceSignature(row.path, libRoot))
+          {/* Merged Library Section — filter band + tree under one title.
+              Collapse hides the filter band and overlays sample="sampled"
+              on the tree without touching the user's filter state. The
+              tree itself stays hierarchical and interactive in both
+              states. */}
+          <Section
+            title={libraryOpen ? "Library" : "Samples"}
+            icon={<FolderTree size={16} />}
+            onTitleClick={() =>
+              setLibraryExpanded(libraryOpen ? "0" : "1")
             }
-            playingSig={playingSig}
-            onPlaySample={playSample}
-            signatureOf={(row) => sourceSignature(row.path, libRoot)}
-            onPublishSample={(row) => setPublishTarget(row)}
-          />
+            className="flex-1 min-h-0"
+            contentClassName="flex-1 min-h-0 flex flex-col gap-3"
+          >
+            {libraryOpen ? (
+              <Filters
+                filter={filter}
+                setFilter={setFilter}
+                counts={counts}
+                total={report?.rows.length ?? 0}
+              />
+            ) : (
+              <div className="text-xs text-muted">
+                Sampled tracks only — click the header to show all filters.
+              </div>
+            )}
+            <LibraryTree
+              rows={filteredRows}
+              libRoot={libRoot}
+              anyFilter={anyFilter}
+              onOpenStatus={setStatus}
+              onSampleScope={(label, tracks) => runSample(label, tracks)}
+              hasSample={(row) =>
+                sampledSignatures.has(sourceSignature(row.path, libRoot))
+              }
+              playingSig={playingSig}
+              onPlaySample={playSample}
+              signatureOf={(row) => sourceSignature(row.path, libRoot)}
+              onPublishSample={(row) => setPublishTarget(row)}
+            />
+          </Section>
         </div>
 
         {/* Right column: Publish above Published-feed */}

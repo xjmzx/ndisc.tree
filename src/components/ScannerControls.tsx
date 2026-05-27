@@ -43,6 +43,11 @@ interface ScannerControlsProps {
     progress: ScanProgress | null;
     cancelling: boolean;
   }) => void;
+  /**
+   * Last-loaded report so the Scanner can pin the "scan date · file
+   * count" line (moved here from the App header).
+   */
+  report: ScanReport | null;
 }
 
 function formatBytes(b: number): string {
@@ -60,7 +65,7 @@ function formatEta(seconds: number): string {
   return `${h}h ${m % 60} min`;
 }
 
-export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState }: ScannerControlsProps) {
+export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState, report }: ScannerControlsProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
   const [state, setState] = useState<State>({ kind: "idle" });
   const [progress, setProgress] = useState<ScanProgress | null>(null);
@@ -183,6 +188,14 @@ export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState
       icon={<ScanLine size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
     >
+      {/* Pinned line — survives the collapse toggle so a glance at the
+          card always answers "what was the last scan?" */}
+      {report && (
+        <div className="text-xs text-muted font-mono">
+          scan: {report.generated.slice(0, 10)} ·{" "}
+          {report.rows.length.toLocaleString()} files
+        </div>
+      )}
       {expanded && (
         <>
       <div className="flex gap-2">

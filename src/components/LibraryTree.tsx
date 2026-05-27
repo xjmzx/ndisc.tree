@@ -6,13 +6,11 @@ import {
   ChevronsUpDown,
   Disc,
   FileAudio,
-  FolderTree,
   Pause,
   Play,
   Scissors,
   Upload,
 } from "lucide-react";
-import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import { splitPath } from "../lib/paths";
 import { openFolder, type ScanRow, type Verdict } from "../lib/tauri";
@@ -242,12 +240,9 @@ export function LibraryTree({
   }
 
   return (
-    <Section
-      title="Library"
-      icon={<FolderTree size={16} />}
-      className="flex-1 min-h-0"
-      contentClassName="flex-1 min-h-0 flex flex-col"
-    >
+    <>
+      {/* Bare tree — no Section wrapper. The merged "Library" Section in
+          App.tsx provides the title/icon/collapse + the flex-1 sizing. */}
       <div className="flex items-center justify-end gap-1 shrink-0 -mt-1">
         <button
           onClick={collapseAll}
@@ -495,6 +490,6 @@ export function LibraryTree({
           );
         })}
       </div>
-    </Section>
+    </>
   );
 }

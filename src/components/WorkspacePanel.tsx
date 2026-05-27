@@ -108,6 +108,32 @@ export function WorkspacePanel({
       title="Mirror tree"
       icon={<FolderTree size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
+      right={
+        <label
+          // stopPropagation so flipping the checkbox doesn't collapse
+          // the panel (the title bar also handles click for that).
+          onClick={(e) => e.stopPropagation()}
+          className={cn(
+            "flex items-center gap-1.5 text-xs cursor-pointer select-none",
+            "px-2 py-0.5 rounded hover:bg-surface/30",
+            running && "opacity-50 cursor-not-allowed",
+          )}
+          title="Run mkdir + chown + chmod through pkexec — one system password prompt for the batch. The destination tree's owner/group/mode will be set to match the source library root."
+        >
+          <input
+            type="checkbox"
+            checked={sudo}
+            onChange={(e) => setSudo(e.target.checked)}
+            disabled={running}
+            className="accent-accent"
+          />
+          <ShieldCheck
+            size={11}
+            className={sudo ? "text-accent" : "text-muted"}
+          />
+          <span className={sudo ? "text-fg" : "text-muted"}>pkexec</span>
+        </label>
+      }
     >
       {/* Pinned line — visible whether the panel is expanded or collapsed.
           Same counts that used to live in the secondary row below. */}
@@ -174,30 +200,6 @@ export function WorkspacePanel({
             >
               <Hammer size={14} className={running ? "animate-pulse" : ""} />
             </button>
-          </div>
-
-          <div className="flex items-center justify-end text-xs">
-            <label
-              className={cn(
-                "flex items-center gap-1.5 cursor-pointer select-none",
-                "px-2 py-0.5 rounded hover:bg-surface/30",
-                running && "opacity-50 cursor-not-allowed",
-              )}
-              title="Run mkdir + chown + chmod through pkexec — one system password prompt for the batch. The destination tree's owner/group/mode will be set to match the source library root."
-            >
-              <input
-                type="checkbox"
-                checked={sudo}
-                onChange={(e) => setSudo(e.target.checked)}
-                disabled={running}
-                className="accent-accent"
-              />
-              <ShieldCheck
-                size={11}
-                className={sudo ? "text-accent" : "text-muted"}
-              />
-              <span className={sudo ? "text-fg" : "text-muted"}>pkexec</span>
-            </label>
           </div>
 
         </>
