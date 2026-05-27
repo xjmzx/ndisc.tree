@@ -802,6 +802,19 @@ async fn scan_sample_dest(
     .map_err(|e| e.to_string())?
 }
 
+/// Read the bytes of a sample clip so the renderer can feed them to an
+/// HTMLAudioElement via a Blob URL. The asset:// protocol on WebKit2GTK
+/// rejects local sample paths with NotSupportedError despite the scope
+/// being wide-open — going through IPC avoids the quirk entirely. Files
+/// are small (10s FLAC ≈ 500 KB–1 MB) so the per-play transfer cost is
+/// acceptable.
+#[tauri::command]
+async fn read_audio_bytes(path: String) -> Result<Vec<u8>, String> {
+    tauri::async_runtime::spawn_blocking(move || std::fs::read(&path).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn sample_tracks(
     items: Vec<SampleItem>,
@@ -1100,6 +1113,106 @@ fn split_send_output(output: &Output<nostr::EventId>) -> (Vec<String>, Vec<Relay
     (accepted, rejected)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishResult {
+    event_id: String,
+    accepted_by: Vec<String>,
+    rejected: Vec<RelayError>,
+}
+
+/// Sign a kind:27235 NIP-98 HTTP-auth event for an outgoing request.
+/// Returns the event JSON; the renderer base64-encodes it and prefixes
+/// with "Nostr " for the Authorization header. Used by the NIP-96
+/// upload to nostr.build — sk stays in the keychain, only the signed
+/// event reaches JS.
+#[tauri::command]
+async fn nip98_sign_event(
+    url: String,
+    method: String,
+    payload_hash: String,
+) -> Result<String, String> {
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity in keychain".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let tags = vec![
+        Tag::parse(["u", &url]).map_err(|e| e.to_string())?,
+        Tag::parse(["method", &method]).map_err(|e| e.to_string())?,
+        Tag::parse(["payload", &payload_hash]).map_err(|e| e.to_string())?,
+    ];
+
+    let event = EventBuilder::new(Kind::Custom(27235), "")
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+
+    serde_json::to_string(&event).map_err(|e| e.to_string())
+}
+
+/// Publish a kind:1063 NIP-94 file metadata event for a hosted file.
+/// `t_tag` categorises the file ("sample" or "full"). Relays come from
+/// the renderer so the indicator chip + the actual publish target stay
+/// in sync (no hardcoded constant). Returns per-relay accept/reject
+/// matching publish_reaction's shape.
+#[tauri::command]
+async fn publish_file_metadata(
+    url: String,
+    sha256: String,
+    size: u64,
+    mime: String,
+    title: String,
+    description: String,
+    t_tag: String,
+    relays: Vec<String>,
+) -> Result<PublishResult, String> {
+    let nsec = load_nsec()?.ok_or_else(|| "no Nostr identity in keychain".to_string())?;
+    let keys = keys_from_nsec(&nsec)?;
+
+    let tags = vec![
+        Tag::parse(["url", &url]).map_err(|e| e.to_string())?,
+        Tag::parse(["m", &mime]).map_err(|e| e.to_string())?,
+        Tag::parse(["x", &sha256]).map_err(|e| e.to_string())?,
+        Tag::parse(["size", &size.to_string()]).map_err(|e| e.to_string())?,
+        Tag::parse(["title", &title]).map_err(|e| e.to_string())?,
+        Tag::parse(["alt", &title]).map_err(|e| e.to_string())?,
+        Tag::parse(["t", &t_tag]).map_err(|e| e.to_string())?,
+    ];
+
+    let content = if description.trim().is_empty() {
+        title.clone()
+    } else {
+        description
+    };
+
+    let event = EventBuilder::new(Kind::Custom(1063), &content)
+        .tags(tags)
+        .sign_with_keys(&keys)
+        .map_err(|e| e.to_string())?;
+    let id = event.id.to_string();
+
+    let relay_refs: Vec<&str> = relays.iter().map(String::as_str).collect();
+    let client = build_client(keys, &relay_refs).await;
+    let send_result = client.send_event(&event).await;
+    let _ = client.shutdown().await;
+
+    let output = send_result.map_err(|e| e.to_string())?;
+    let (accepted_by, rejected) = split_send_output(&output);
+
+    if accepted_by.is_empty() {
+        let first = rejected
+            .first()
+            .map(|r| format!("{}: {}", r.relay, r.error))
+            .unwrap_or_else(|| "no relays accepted the event".to_string());
+        return Err(format!("publish failed — {first}"));
+    }
+
+    Ok(PublishResult {
+        event_id: id,
+        accepted_by,
+        rejected,
+    })
+}
+
 /// Publish a kind:7 reaction referencing an arbitrary (non-replaceable)
 /// event. For kind:1063 audio in the FeedPanel: target_kind = 1063,
 /// content = "+" / "-" / emoji.
@@ -1192,6 +1305,9 @@ pub fn run() {
             sample_tracks,
             cancel_sample,
             scan_sample_dest,
+            read_audio_bytes,
+            nip98_sign_event,
+            publish_file_metadata,
             count_audio_files,
             create_mirror_tree,
             load_report,

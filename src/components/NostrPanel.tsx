@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, KeyRound, Radio, Sparkles, Trash2 } from "lucide-react";
 import { Section } from "./Section";
+import { usePersistedBool } from "../lib/usePersistedString";
 import {
   clearIdentity,
   generateIdentity,
@@ -9,11 +10,7 @@ import {
   type Identity,
 } from "../lib/nostr";
 
-// Stub for publishing — no obvious thing for a quality scanner to push
-// yet. Identity scaffolding is real: nsec lives in the OS keychain via
-// the Rust `keyring` crate (libsecret on Linux), and the same identity
-// powers FeedPanel's "me only" toggle. When a publish use case appears,
-// port NIP-96 upload + NIP-94 publish from smpl-tool's lib/nostr.ts.
+const EXPANDED_KEY = "afqc-tauri.publish.expanded";
 
 interface NostrPanelProps {
   identity: Identity | null;
@@ -28,6 +25,7 @@ interface NostrPanelProps {
 }
 
 export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
+  const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
   const [input, setInput] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -89,7 +87,13 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
   }
 
   return (
-    <Section title="Publish · Nostr" icon={<Radio size={16} />}>
+    <Section
+      title="Publish"
+      icon={<Radio size={16} />}
+      onTitleClick={() => setExpanded(!expanded)}
+    >
+      {expanded && (
+        <>
       <div>
         <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
           Identity
@@ -168,9 +172,7 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
             </li>
           ))}
         </ul>
-        <p className="text-[10px] text-muted mt-1">
-          Read-only for now — editable list lands in the next iteration.
-        </p>
+        <p className="text-[10px] text-muted mt-1">Read-only.</p>
       </div>
 
       {backupNsec && (
@@ -205,21 +207,11 @@ export function NostrPanel({ identity, setIdentity, relays }: NostrPanelProps) {
       )}
 
       <p className="text-xs text-muted leading-relaxed">
-        Publish action not wired — no obvious thing for a quality scanner to
-        push yet. The identity above lives in the OS keychain (libsecret on
-        Linux) and powers FeedPanel&apos;s <em>me only</em> toggle. When a
-        publish use case appears, port{" "}
-        <code className="text-fg/80">lib/nostr.ts</code> upload + publish from{" "}
-        <code className="text-fg/80">smpl-tool</code>.
+        Publish sample clips from the library via the per-track upload
+        action; nsec stays in the OS keychain.
       </p>
-
-      <button
-        disabled
-        className="px-3 py-2 rounded-md bg-surface text-muted text-xs
-                   cursor-not-allowed opacity-50"
-      >
-        Publish (TODO)
-      </button>
+        </>
+      )}
     </Section>
   );
 }

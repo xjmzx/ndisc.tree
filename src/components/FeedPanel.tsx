@@ -221,7 +221,7 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
   const reactions = useReactions(reactionRefs, identity?.pk ?? null, KIND);
 
   return (
-    <Section title="Listen · Nostr" icon={<Headphones size={16} />}>
+    <Section title="Published" icon={<Headphones size={16} />}>
       <div className="flex items-center gap-2 text-xs">
         <span
           className={cn(

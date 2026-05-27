@@ -7,6 +7,7 @@ import { ScannerControls } from "./components/ScannerControls";
 import { SamplerPanel } from "./components/SamplerPanel";
 import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
+import { PublishSampleDialog } from "./components/PublishSampleDialog";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { FeedPanel } from "./components/FeedPanel";
 import { NostrPanel } from "./components/NostrPanel";
@@ -14,6 +15,7 @@ import {
   cancelSample,
   loadReport,
   onSampleProgress,
+  readAudioBytes,
   sampleTracks,
   scanSampleDest,
   type SampleProgress,
@@ -103,6 +105,71 @@ export default function App() {
   const [sampledSignatures, setSampledSignatures] = useState<Set<string>>(
     () => new Set(),
   );
+  // Sample playback — single HTMLAudioElement reused across rows, one
+  // clip at a time. `playingSig` is the source-signature of the row whose
+  // clip is currently playing (matches the keys used in `sampledSignatures`).
+  // Reusing the element rather than creating a new Audio() per click keeps
+  // WebKit2GTK happy — Web Audio output is broken on this stack, so
+  // HTMLMediaElement is the only working path (same pattern as FeedPanel).
+  // Row pending a "publish to Nostr" click — when non-null the dialog
+  // overlays the UI; on close (cancel or success) we reset to null.
+  const [publishTarget, setPublishTarget] = useState<ScanRow | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Track the current object URL so we can revoke it when playback ends
+  // or a new clip starts — Blob URLs leak memory otherwise.
+  const audioUrlRef = useRef<string | null>(null);
+  const [playingSig, setPlayingSig] = useState<string | null>(null);
+
+  function clearAudio() {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.removeAttribute("src");
+      audioRef.current.load();
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+  }
+
+  async function playSample(row: ScanRow) {
+    const sig = sourceSignature(row.path, libRoot);
+    if (playingSig === sig) {
+      clearAudio();
+      setPlayingSig(null);
+      return;
+    }
+    clearAudio();
+    const destPath = sampleDestPath(row.path, libRoot, workspaceDest, SAMPLE_SECS);
+    try {
+      const bytes = await readAudioBytes(destPath);
+      // Cast: Uint8Array.buffer is `ArrayBufferLike` in modern lib.dom.d.ts
+      // (could be SharedArrayBuffer in theory); Blob's signature wants
+      // ArrayBuffer specifically. We know it's plain ArrayBuffer here.
+      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "audio/flac" });
+      const url = URL.createObjectURL(blob);
+      audioUrlRef.current = url;
+      const audio = audioRef.current ?? new Audio();
+      audio.src = url;
+      audio.onended = () => {
+        setPlayingSig((p) => (p === sig ? null : p));
+        clearAudio();
+      };
+      audio.onerror = () => {
+        setPlayingSig((p) => (p === sig ? null : p));
+        setStatus({ text: `playback failed: ${destPath}`, tone: "alert" });
+        clearAudio();
+      };
+      audioRef.current = audio;
+      setPlayingSig(sig);
+      await audio.play();
+    } catch (e) {
+      setPlayingSig((p) => (p === sig ? null : p));
+      setStatus({ text: `playback failed: ${e}`, tone: "alert" });
+      clearAudio();
+    }
+  }
 
   async function refreshSampledSignatures(dest: string) {
     if (!dest.trim()) {
@@ -412,17 +479,28 @@ export default function App() {
       </header>
 
       <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] gap-4 items-stretch">
-        {/* Left column: scanner + filters + tree (tree fills remaining height) */}
+        {/* Left column: scanner+mirror-tree top sub-row, then sampler /
+            filters / library tree (tree fills remaining height) */}
         <div className="flex flex-col gap-4 min-w-0 min-h-0">
-          <ScannerControls
-            root={root}
-            setRoot={setRoot}
-            onReport={(r) => {
-              setReport(r);
-              setRoot(r.root);
-            }}
-            onStatus={setStatus}
-          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <ScannerControls
+              root={root}
+              setRoot={setRoot}
+              onReport={(r) => {
+                setReport(r);
+                setRoot(r.root);
+              }}
+              onStatus={setStatus}
+            />
+            <WorkspacePanel
+              rows={filteredRows}
+              libRoot={libRoot}
+              anyFilter={anyFilter}
+              dest={workspaceDest}
+              setDest={setWorkspaceDest}
+              onStatus={setStatus}
+            />
+          </div>
           <SamplerPanel
             rows={filteredRows}
             dest={workspaceDest}
@@ -448,25 +526,21 @@ export default function App() {
             hasSample={(row) =>
               sampledSignatures.has(sourceSignature(row.path, libRoot))
             }
+            playingSig={playingSig}
+            onPlaySample={playSample}
+            signatureOf={(row) => sourceSignature(row.path, libRoot)}
+            onPublishSample={(row) => setPublishTarget(row)}
           />
         </div>
 
-        {/* Right column: Workspace · Listen (Nostr feed) · Publish stub */}
+        {/* Right column: Publish above Published-feed */}
         <div className="flex flex-col gap-4 min-h-0 overflow-auto">
-          <WorkspacePanel
-            rows={filteredRows}
-            libRoot={libRoot}
-            anyFilter={anyFilter}
-            dest={workspaceDest}
-            setDest={setWorkspaceDest}
-            onStatus={setStatus}
-          />
-          <FeedPanel identity={identity} relays={DEFAULT_RELAYS} />
           <NostrPanel
             identity={identity}
             setIdentity={setIdentity}
             relays={DEFAULT_RELAYS}
           />
+          <FeedPanel identity={identity} relays={DEFAULT_RELAYS} />
         </div>
       </div>
 
@@ -522,6 +596,23 @@ export default function App() {
           </span>
         </span>
       </footer>
+
+      {publishTarget && (
+        <PublishSampleDialog
+          row={publishTarget}
+          libRoot={libRoot}
+          workspaceDest={workspaceDest}
+          relays={[...DEFAULT_RELAYS]}
+          identityNpub={identity?.npub ?? null}
+          onClose={() => {
+            setPublishTarget(null);
+            // Refresh in case the publish flow had side effects worth
+            // surfacing later (e.g. once we add a has-published indicator).
+            refreshSampledSignatures(workspaceDest);
+          }}
+          onStatus={setStatus}
+        />
+      )}
     </div>
   );
 }

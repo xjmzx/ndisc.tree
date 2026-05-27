@@ -163,6 +163,134 @@ export async function scanSampleDest(
   return invoke<string[]>("scan_sample_dest", { destRoot, durationSecs });
 }
 
+/**
+ * Read raw bytes of a local audio file for playback via a Blob URL.
+ * Bypasses asset:// (which throws NotSupportedError on this WebKit2GTK).
+ * Returns the bytes as a number[] which the caller wraps in a Uint8Array.
+ */
+export async function readAudioBytes(path: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("read_audio_bytes", { path });
+  return new Uint8Array(bytes);
+}
+
+// ---- NIP-96 upload + NIP-94 publish ----
+
+export const DEFAULT_NIP96_ENDPOINT =
+  "https://nostr.build/api/v2/nip96/upload";
+
+export interface UploadResult {
+  url: string;
+  hash: string;
+  size: number;
+  mime: string;
+}
+
+export interface FilePublishResult {
+  eventId: string;
+  acceptedBy: string[];
+  rejected: RelayError[];
+}
+
+/**
+ * SHA-256 hex digest of `bytes` via WebCrypto. Used to compute both the
+ * NIP-98 payload hash and the NIP-94 `x` tag.
+ */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    bytes.buffer as ArrayBuffer,
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Sign a kind:27235 HTTP-auth event in Rust (sk stays in keychain) and
+ * return the "Nostr <base64>" Authorization header. Matches smpl-tool's
+ * upload-side auth path; only the JSON crosses the IPC boundary.
+ */
+export async function nip98AuthHeader(
+  url: string,
+  method: string,
+  payloadHash: string,
+): Promise<string> {
+  const eventJson = await invoke<string>("nip98_sign_event", {
+    url,
+    method,
+    payloadHash,
+  });
+  return "Nostr " + btoa(eventJson);
+}
+
+/** Upload a file to a NIP-96 endpoint (default: nostr.build). */
+export async function uploadToNip96(
+  bytes: Uint8Array,
+  filename: string,
+  mime: string,
+  endpoint: string = DEFAULT_NIP96_ENDPOINT,
+): Promise<UploadResult> {
+  const hash = await sha256Hex(bytes);
+  const auth = await nip98AuthHeader(endpoint, "POST", hash);
+
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([bytes.buffer as ArrayBuffer], { type: mime }),
+    filename,
+  );
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { Authorization: auth },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`upload ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as {
+    nip94_event?: { tags?: string[][] };
+    data?: { url?: string }[];
+    url?: string;
+  };
+  const url =
+    json?.nip94_event?.tags?.find((t) => t[0] === "url")?.[1] ??
+    json?.data?.[0]?.url ??
+    json?.url;
+  if (!url) throw new Error("upload succeeded but no URL returned");
+  return { url, hash, size: bytes.byteLength, mime };
+}
+
+/**
+ * Publish a kind:1063 file-metadata event for an uploaded file.
+ * `tTag` is "sample" or "full" — categorisation for consumers.
+ */
+export async function publishFileMetadata(
+  p: {
+    url: string;
+    sha256: string;
+    size: number;
+    mime: string;
+    title: string;
+    description?: string;
+    tTag: "sample" | "full";
+    relays: string[];
+  },
+): Promise<FilePublishResult> {
+  return invoke<FilePublishResult>("publish_file_metadata", {
+    url: p.url,
+    sha256: p.sha256,
+    size: p.size,
+    mime: p.mime,
+    title: p.title,
+    description: p.description ?? "",
+    tTag: p.tTag,
+    relays: p.relays,
+  });
+}
+
 export async function onSampleProgress(
   cb: (p: SampleProgress) => void,
 ): Promise<UnlistenFn> {

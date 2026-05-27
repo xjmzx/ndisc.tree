@@ -4,8 +4,12 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  Disc,
   FolderTree,
+  Pause,
+  Play,
   Scissors,
+  Upload,
 } from "lucide-react";
 import { Section } from "./Section";
 import { cn } from "../lib/cn";
@@ -75,12 +79,50 @@ function countsFor(tracks: TrackRow[]): Record<Verdict, number> {
   return c;
 }
 
-function breakdown(c: Record<Verdict, number>): string {
-  const order: Verdict[] = ["LOSSLESS", "UNCERTAIN", "PROBABLY-LOSSY", "LOSSY", "UNKNOWN"];
-  return order
-    .filter((v) => c[v] > 0)
-    .map((v) => `${c[v]} ${v.split("-")[0].toLowerCase()}`)
-    .join("  ");
+/**
+ * Compact 5-segment proportional bar showing the verdict distribution
+ * for a scope (artist or album). Same color scheme + tooltips as the
+ * library-health bar in the App header; smaller dimensions to fit
+ * inline next to the track count on each tree row.
+ */
+function VerdictBar({
+  counts,
+  total,
+}: {
+  counts: Record<Verdict, number>;
+  total: number;
+}) {
+  if (total === 0) return null;
+  const seg = (n: number) => (100 * n) / total;
+  return (
+    <div className="w-24 h-1 rounded-sm overflow-hidden bg-bg/60 flex shrink-0">
+      <div
+        className="h-full bg-ok"
+        style={{ width: `${seg(counts.LOSSLESS)}%` }}
+        title={`LOSSLESS ${counts.LOSSLESS}`}
+      />
+      <div
+        className="h-full bg-alert"
+        style={{ width: `${seg(counts["PROBABLY-LOSSY"])}%` }}
+        title={`PROBABLY-LOSSY ${counts["PROBABLY-LOSSY"]}`}
+      />
+      <div
+        className="h-full bg-warn"
+        style={{ width: `${seg(counts.UNCERTAIN)}%` }}
+        title={`UNCERTAIN ${counts.UNCERTAIN}`}
+      />
+      <div
+        className="h-full bg-mauve"
+        style={{ width: `${seg(counts.LOSSY)}%` }}
+        title={`LOSSY ${counts.LOSSY}`}
+      />
+      <div
+        className="h-full bg-muted"
+        style={{ width: `${seg(counts.UNKNOWN)}%` }}
+        title={`UNKNOWN ${counts.UNKNOWN}`}
+      />
+    </div>
+  );
 }
 
 interface LibraryTreeProps {
@@ -102,6 +144,18 @@ interface LibraryTreeProps {
    * artist/album rows that already have samples on disk.
    */
   hasSample: (row: ScanRow) => boolean;
+  /**
+   * Source-signature of the row whose clip is currently playing (or
+   * null when nothing's playing). Drives the Play/Pause icon swap on
+   * per-track rows; matches the keys `hasSample` uses.
+   */
+  playingSig: string | null;
+  /** Toggle play/stop for a row's sampled clip. */
+  onPlaySample: (row: ScanRow) => void;
+  /** Compute the same signature App uses, so rows can match `playingSig`. */
+  signatureOf: (row: ScanRow) => string;
+  /** Open the publish dialog for a row's sampled clip. */
+  onPublishSample: (row: ScanRow) => void;
 }
 
 export function LibraryTree({
@@ -111,6 +165,10 @@ export function LibraryTree({
   onOpenStatus,
   onSampleScope,
   hasSample,
+  playingSig,
+  onPlaySample,
+  signatureOf,
+  onPublishSample,
 }: LibraryTreeProps) {
   const artists = useMemo(() => group(rows, libRoot), [rows, libRoot]);
   const [openArtists, setOpenArtists] = useState<Set<string>>(new Set());
@@ -228,11 +286,18 @@ export function LibraryTree({
                 >
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span className="flex-1 truncate">{artist.name}</span>
-                  <span className="text-xs text-muted font-normal">
-                    {artist.albums.length} albums · {artist.totalTracks} tracks
-                  </span>
-                  <span className="text-xs text-muted font-normal hidden md:inline">
-                    {breakdown(ac)}
+                  <span className="text-xs text-muted font-normal flex items-center gap-2 shrink-0">
+                    <span
+                      className="inline-flex items-center gap-1 tabular-nums"
+                      title={`${artist.albums.length} release${artist.albums.length === 1 ? "" : "s"}`}
+                    >
+                      {artist.albums.length}
+                      <Disc size={11} aria-hidden />
+                    </span>
+                    <VerdictBar counts={ac} total={artist.totalTracks} />
+                    <span className="tabular-nums">
+                      {artist.totalTracks}
+                    </span>
                   </span>
                 </button>
                 <button
@@ -281,11 +346,14 @@ export function LibraryTree({
                         >
                           {alOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                           <span className="flex-1 truncate">{album.name}</span>
-                          <span className="text-xs text-muted not-italic">
-                            {album.tracks.length} tracks
-                          </span>
-                          <span className="text-xs text-muted not-italic hidden md:inline">
-                            {breakdown(albumCounts)}
+                          <span className="text-xs text-muted not-italic flex items-center gap-2 shrink-0">
+                            <VerdictBar
+                              counts={albumCounts}
+                              total={album.tracks.length}
+                            />
+                            <span className="tabular-nums">
+                              {album.tracks.length}
+                            </span>
                           </span>
                         </button>
                         <button
@@ -301,28 +369,81 @@ export function LibraryTree({
                         </button>
                       </div>
                       {alOpen &&
-                        album.tracks.map((t, i) => (
-                          <div
-                            key={t.path}
-                            onDoubleClick={() => openTrackFolder(t)}
-                            title={t.path}
-                            className={cn(
-                              "grid grid-cols-[1fr_120px_90px_70px] gap-2 items-center",
-                              "pl-14 pr-3 py-0.5 text-xs font-mono cursor-pointer",
-                              "hover:bg-surface/40",
-                              i % 2 === 1 && "bg-bg/40",
-                            )}
-                          >
-                            <span className="truncate text-fg/80">{t._track}</span>
-                            <span className={cn(VERDICT_COLOR[t.verdict])}>{t.verdict}</span>
-                            <span className="text-right text-muted">
-                              {t.peak !== null ? `${t.peak >= 0 ? "+" : ""}${t.peak.toFixed(1)} dB` : ""}
-                            </span>
-                            <span className="text-right text-muted">
-                              {t.sr ? `${t.sr.toLocaleString()} Hz` : ""}
-                            </span>
-                          </div>
-                        ))}
+                        album.tracks.map((t, i) => {
+                          const sampled = hasSample(t);
+                          const isPlaying = sampled && playingSig === signatureOf(t);
+                          return (
+                            <div
+                              key={t.path}
+                              onDoubleClick={() => openTrackFolder(t)}
+                              title={t.path}
+                              className={cn(
+                                "grid grid-cols-[16px_16px_1fr_120px_90px_70px] gap-2 items-center",
+                                "pl-12 pr-3 py-0.5 text-xs font-mono cursor-pointer",
+                                "hover:bg-surface/40",
+                                i % 2 === 1 && "bg-bg/40",
+                              )}
+                            >
+                              {sampled ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPlaySample(t);
+                                  }}
+                                  title={
+                                    isPlaying
+                                      ? "Stop playback"
+                                      : "Play 10s sample"
+                                  }
+                                  aria-label={
+                                    isPlaying
+                                      ? `Stop playback of ${t._track}`
+                                      : `Play sample of ${t._track}`
+                                  }
+                                  className={cn(
+                                    "flex items-center justify-center rounded",
+                                    "hover:text-accent",
+                                    isPlaying ? "text-mauve" : "text-ok",
+                                  )}
+                                >
+                                  {isPlaying ? (
+                                    <Pause size={11} />
+                                  ) : (
+                                    <Play size={11} />
+                                  )}
+                                </button>
+                              ) : (
+                                <span aria-hidden className="block w-4 h-4" />
+                              )}
+                              {sampled ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onPublishSample(t);
+                                  }}
+                                  title="Publish to Nostr (kind:1063)"
+                                  aria-label={`Publish ${t._track} to Nostr`}
+                                  className="flex items-center justify-center rounded
+                                             text-muted hover:text-accent"
+                                >
+                                  <Upload size={11} />
+                                </button>
+                              ) : (
+                                <span aria-hidden className="block w-4 h-4" />
+                              )}
+                              <span className="truncate text-fg/80">{t._track}</span>
+                              <span className={cn(VERDICT_COLOR[t.verdict])}>{t.verdict}</span>
+                              <span className="text-right text-muted">
+                                {t.peak !== null ? `${t.peak >= 0 ? "+" : ""}${t.peak.toFixed(1)} dB` : ""}
+                              </span>
+                              <span className="text-right text-muted">
+                                {t.sr ? `${t.sr.toLocaleString()} Hz` : ""}
+                              </span>
+                            </div>
+                          );
+                        })}
                     </div>
                   );
                 })}
