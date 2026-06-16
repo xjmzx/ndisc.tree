@@ -19,6 +19,8 @@ interface SamplerPanelProps {
   onSample: (tracks: ScanRow[]) => void;
   /** Stop the running batch (in-flight ffmpegs finish, ≤60s). */
   onCancelSample: () => void;
+  /** Render bare (no Section card) — for the merged Source & Destination panel. */
+  bare?: boolean;
 }
 
 export function SamplerPanel({
@@ -28,8 +30,10 @@ export function SamplerPanel({
   sampling,
   onSample,
   onCancelSample,
+  bare = false,
 }: SamplerPanelProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
+  const open = bare || expanded;
   const running = sampling !== null;
   const count = rows.length;
   const canRun = !running && count > 0 && dest.trim() !== "";
@@ -49,12 +53,13 @@ export function SamplerPanel({
       title="Destination"
       icon={<Scissors size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
+      flat={bare}
     >
       {/* Pinned line — visible whether the panel is expanded or collapsed. */}
       <p className="text-xs text-muted">
         Saves a {SAMPLE_SECS} sec clip from filter to Mirror Tree.
       </p>
-      {expanded && (
+      {open && (
         <>
       <div className="flex gap-2">
         <input

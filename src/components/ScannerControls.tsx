@@ -48,6 +48,8 @@ interface ScannerControlsProps {
    * count" line (moved here from the App header).
    */
   report: ScanReport | null;
+  /** Render bare (no Section card) — for the merged Source & Destination panel. */
+  bare?: boolean;
 }
 
 function formatBytes(b: number): string {
@@ -65,8 +67,9 @@ function formatEta(seconds: number): string {
   return `${h}h ${m % 60} min`;
 }
 
-export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState, report }: ScannerControlsProps) {
+export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState, report, bare = false }: ScannerControlsProps) {
   const [expanded, setExpanded] = usePersistedBool(EXPANDED_KEY, true);
+  const open = bare || expanded;
   const [state, setState] = useState<State>({ kind: "idle" });
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -187,6 +190,7 @@ export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState
       title="Scanner"
       icon={<ScanLine size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
+      flat={bare}
     >
       {/* Pinned line — survives the collapse toggle so a glance at the
           card always answers "what was the last scan?" */}
@@ -196,7 +200,7 @@ export function ScannerControls({ root, setRoot, onReport, onStatus, onScanState
           {report.rows.length.toLocaleString()} files
         </div>
       )}
-      {expanded && (
+      {open && (
         <>
       <div className="flex gap-2">
         <input

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  FolderOpen,
   FolderTree,
   Hammer,
   Plus,
@@ -8,7 +7,6 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import { uniquePairs } from "../lib/paths";
@@ -35,9 +33,9 @@ interface WorkspacePanelProps {
   rows: ScanRow[];
   libRoot: string;
   anyFilter: boolean;
-  /** Shared workspace destination — also consumed by SamplerPanel. */
+  /** Shared workspace destination — set in the Source & destination panel;
+   *  read-only here (drives the mirror-create + folder list). */
   dest: string;
-  setDest: (v: string) => void;
   onStatus: (s: { text: string; tone: "muted" | "warn" | "ok" | "alert" }) => void;
   /**
    * Lifts the mirror state (running / done / err) up so the shared
@@ -56,7 +54,6 @@ export function WorkspacePanel({
   libRoot,
   anyFilter,
   dest,
-  setDest,
   onStatus,
   onMirrorState,
 }: WorkspacePanelProps) {
@@ -78,16 +75,6 @@ export function WorkspacePanel({
     () => new Set(pairs.map((p) => p.artist)).size,
     [pairs],
   );
-
-  async function browse() {
-    const picked = await openDialog({
-      directory: true,
-      multiple: false,
-      title: "Choose mirror destination",
-      defaultPath: dest || undefined,
-    });
-    if (typeof picked === "string") setDest(picked);
-  }
 
   // --- Mirror-folder management (add / trash) ------------------------------
   const [folders, setFolders] = useState<DestFolder[]>([]);
@@ -228,29 +215,20 @@ export function WorkspacePanel({
       </div>
       {expanded && (
         <>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={dest}
-              onChange={(e) => setDest(e.target.value)}
-              placeholder="/path/to/workspace"
-              disabled={running}
-              className="flex-1 px-3 py-2 rounded-md bg-surface text-fg
-                         placeholder:text-muted outline-none border border-transparent
-                         focus:border-accent/50 disabled:opacity-50"
-              spellCheck={false}
-            />
-            <button
-              onClick={browse}
-              disabled={running}
-              className="px-3 py-2 rounded-md bg-surface hover:bg-surfaceHover
-                         text-fg disabled:opacity-50 disabled:cursor-not-allowed
-                         flex items-center justify-center"
-              title="Browse for destination"
-              aria-label="Browse for destination"
+          <div className="flex gap-2 items-center">
+            {/* Destination is set in the Source & destination panel; shown
+                here read-only so it's clear what the mirror writes into. */}
+            <div
+              className="flex-1 px-3 py-2 rounded-md bg-bg/50 text-xs font-mono truncate
+                         text-fg/80"
+              title={dest || "no destination set"}
             >
-              <FolderOpen size={14} />
-            </button>
+              {dest || (
+                <span className="text-muted">
+                  set a destination in Source &amp; destination
+                </span>
+              )}
+            </div>
             <button
               onClick={createMirror}
               disabled={!canRun}

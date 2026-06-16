@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FolderTree, KeyRound, Lock, LogOut, Radio } from "lucide-react";
+import {
+  ArrowRightLeft,
+  FolderTree,
+  KeyRound,
+  Lock,
+  LogOut,
+  Radio,
+} from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { SimplePool } from "nostr-tools";
 import { cn } from "./lib/cn";
@@ -535,36 +542,58 @@ export default function App() {
             owns its own progress strip — door open to lift them into a
             shared output area later (Option B). */}
         <div className="flex flex-col gap-4 min-w-0 min-h-0">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <ScannerControls
-              root={root}
-              setRoot={setRoot}
-              onReport={(r) => {
-                setReport(r);
-                setRoot(r.root);
-              }}
-              onStatus={setStatus}
-              onScanState={setScanState}
-              report={report}
-            />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Source & destination — Scanner (source root + scan) over
+                Destination (dest + sample) in one card. Both render bare;
+                the dest editor lives only here now (Mirror tree reads it). */}
+            <Section
+              title="Source & destination"
+              icon={<ArrowRightLeft size={16} />}
+            >
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
+                  Source
+                </div>
+                <ScannerControls
+                  bare
+                  root={root}
+                  setRoot={setRoot}
+                  onReport={(r) => {
+                    setReport(r);
+                    setRoot(r.root);
+                  }}
+                  onStatus={setStatus}
+                  onScanState={setScanState}
+                  report={report}
+                />
+              </div>
+              <div className="border-t border-surface/50 pt-3">
+                <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
+                  Destination
+                </div>
+                <SamplerPanel
+                  bare
+                  rows={filteredRows}
+                  dest={workspaceDest}
+                  setDest={setWorkspaceDest}
+                  sampling={sampling}
+                  onSample={(tracks) =>
+                    runSample(
+                      anyFilter ? "filtered library" : "full library",
+                      tracks,
+                    )
+                  }
+                  onCancelSample={stopSample}
+                />
+              </div>
+            </Section>
             <WorkspacePanel
               rows={filteredRows}
               libRoot={libRoot}
               anyFilter={anyFilter}
               dest={workspaceDest}
-              setDest={setWorkspaceDest}
               onStatus={setStatus}
               onMirrorState={setMirrorState}
-            />
-            <SamplerPanel
-              rows={filteredRows}
-              dest={workspaceDest}
-              setDest={setWorkspaceDest}
-              sampling={sampling}
-              onSample={(tracks) =>
-                runSample(anyFilter ? "filtered library" : "full library", tracks)
-              }
-              onCancelSample={stopSample}
             />
           </div>
           <OperationOutput

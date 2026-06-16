@@ -17,6 +17,12 @@ interface SectionProps {
    * passes `false` as children to omit the body entirely.
    */
   onTitleClick?: () => void;
+  /**
+   * Render without the card chrome + header — just the children in a plain
+   * column. Used to compose a panel inside another Section (e.g. Scanner +
+   * Destination nested in one "Source & destination" card).
+   */
+  flat?: boolean;
 }
 
 export function Section({
@@ -27,7 +33,15 @@ export function Section({
   className,
   contentClassName,
   onTitleClick,
+  flat,
 }: SectionProps) {
+  if (flat) {
+    return (
+      <div className={cn("flex flex-col gap-3", contentClassName)}>
+        {children}
+      </div>
+    );
+  }
   const hasBody = children != null && children !== false;
   return (
     <section
