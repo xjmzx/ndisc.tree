@@ -32,12 +32,16 @@ interface TrackRow extends ScanRow {
 interface Album {
   name: string;
   tracks: TrackRow[];
+  /** Verdict tally, computed once in group() — avoids re-running countsFor
+   *  over the tracks on every render of the (often fully-expanded) tree. */
+  verdictCounts: Record<Verdict, number>;
 }
 
 interface Artist {
   name: string;
   albums: Album[];
   totalTracks: number;
+  verdictCounts: Record<Verdict, number>;
 }
 
 function group(rows: ScanRow[], root: string): Artist[] {
@@ -54,13 +58,18 @@ function group(rows: ScanRow[], root: string): Artist[] {
   for (const [name, albumsMap] of byArtist) {
     const albums: Album[] = [];
     let totalTracks = 0;
+    const artistCounts = countsFor([]); // zeroed tally to accumulate into
     for (const [aname, tracks] of albumsMap) {
       tracks.sort((a, b) => a._track.toLowerCase().localeCompare(b._track.toLowerCase()));
-      albums.push({ name: aname, tracks });
+      const verdictCounts = countsFor(tracks);
+      albums.push({ name: aname, tracks, verdictCounts });
       totalTracks += tracks.length;
+      (Object.keys(verdictCounts) as Verdict[]).forEach((v) => {
+        artistCounts[v] += verdictCounts[v];
+      });
     }
     albums.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-    out.push({ name, albums, totalTracks });
+    out.push({ name, albums, totalTracks, verdictCounts: artistCounts });
   }
   out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   return out;
@@ -203,12 +212,13 @@ export function LibraryTree({
   const wasFiltering = useRef(false);
   useEffect(() => {
     if (anyFilter && !wasFiltering.current) {
+      // Expand artists so matching releases show, but keep albums COLLAPSED —
+      // their track rows render on demand. A loose filter otherwise mounts
+      // thousands of track rows at once (the search-bar CPU spike); this caps
+      // the filtered render at ~artists+albums, glmps-style "browse the
+      // matches, drill in". Each album row's count already reflects matches.
       setOpenArtists(new Set(artists.map((a) => a.name)));
-      setOpenAlbums(
-        new Set(
-          artists.flatMap((a) => a.albums.map((al) => `${a.name}//${al.name}`)),
-        ),
-      );
+      setOpenAlbums(new Set());
     }
     wasFiltering.current = anyFilter;
   }, [anyFilter, artists]);
@@ -283,8 +293,8 @@ export function LibraryTree({
         )}
         {artists.map((artist) => {
           const isOpen = openArtists.has(artist.name);
+          const ac = artist.verdictCounts;
           const allArtistTracks = artist.albums.flatMap((a) => a.tracks);
-          const ac = countsFor(allArtistTracks);
           const sampledHere = allArtistTracks.filter(hasSample).length;
           const sampleState =
             sampledHere === 0
@@ -358,7 +368,7 @@ export function LibraryTree({
                 artist.albums.map((album) => {
                   const key = `${artist.name}//${album.name}`;
                   const alOpen = openAlbums.has(key);
-                  const albumCounts = countsFor(album.tracks);
+                  const albumCounts = album.verdictCounts;
                   const alSampled = album.tracks.filter(hasSample).length;
                   const alState =
                     alSampled === 0

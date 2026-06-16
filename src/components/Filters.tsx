@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { VERDICTS, type Verdict } from "../lib/tauri";
+import { cn } from "../lib/cn";
 
 export type SampleFilter = "all" | "sampled" | "unsampled";
 
@@ -91,23 +92,42 @@ export function Filters({ filter, setFilter, counts, total }: FiltersProps) {
         />
       </div>
 
-      <div className="relative" title="Filter by sampled-on-disk status">
-        <select
-          value={filter.sample}
-          onChange={(e) =>
-            setFilter({ ...filter, sample: e.target.value as SampleFilter })
-          }
-          className="appearance-none pl-3 pr-8 py-2 rounded-md bg-bg text-fg outline-none
-                     border border-transparent focus:border-accent/50 text-sm cursor-pointer"
-        >
-          <option value="all">All</option>
-          <option value="sampled">Sampled</option>
-          <option value="unsampled">Unsampled</option>
-        </select>
-        <ChevronDown
-          size={14}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
-        />
+      {/* Clip-exists toggle — has-clip / no-clip on disk, same round-dot
+          language as the Mirror tree's has/no-audio chips. */}
+      <div
+        className="flex items-center gap-1 text-xs"
+        title="Filter by whether a 10s clip exists on disk"
+      >
+        {(
+          [
+            ["all", "all", null],
+            ["sampled", "has clip", true],
+            ["unsampled", "no clip", false],
+          ] as const
+        ).map(([key, label, dot]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setFilter({ ...filter, sample: key as SampleFilter })}
+            aria-pressed={filter.sample === key}
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-colors",
+              filter.sample === key
+                ? "bg-bg text-fg"
+                : "text-muted hover:text-fg hover:bg-bg/50",
+            )}
+          >
+            {dot !== null && (
+              <span
+                className={cn(
+                  "w-2 h-2 rounded-full",
+                  dot ? "bg-accent" : "border border-muted/70",
+                )}
+              />
+            )}
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 min-w-[200px] relative">
