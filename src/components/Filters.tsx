@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { VERDICTS, type Verdict } from "../lib/tauri";
 
@@ -36,6 +36,23 @@ const VERDICT_COLOR: Record<Verdict, string> = {
  */
 export function Filters({ filter, setFilter, counts, total }: FiltersProps) {
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // Local search text so typing is instant; the expensive committed filter
+  // (re-filters all rows + re-groups the tree) only fires ~200ms after the
+  // last keystroke. Kept in sync when search is cleared/changed externally
+  // (e.g. Esc).
+  const [searchInput, setSearchInput] = useState(filter.search);
+  useEffect(() => {
+    setSearchInput(filter.search);
+  }, [filter.search]);
+  useEffect(() => {
+    if (searchInput === filter.search) return;
+    const id = setTimeout(
+      () => setFilter({ ...filter, search: searchInput }),
+      200,
+    );
+    return () => clearTimeout(id);
+  }, [searchInput, filter, setFilter]);
 
   // Ctrl+F focuses the search box (matches the Tk app's binding).
   useEffect(() => {
@@ -101,8 +118,8 @@ export function Filters({ filter, setFilter, counts, total }: FiltersProps) {
         <input
           ref={searchRef}
           type="text"
-          value={filter.search}
-          onChange={(e) => setFilter({ ...filter, search: e.target.value })}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           placeholder="search path…  (Ctrl+F · Esc clears)"
           className="w-full pl-8 pr-3 py-2 rounded-md bg-surface text-fg
                      placeholder:text-muted outline-none border border-transparent

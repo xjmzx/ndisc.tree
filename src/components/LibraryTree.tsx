@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -196,12 +196,21 @@ export function LibraryTree({
   const [openArtists, setOpenArtists] = useState<Set<string>>(new Set());
   const [openAlbums, setOpenAlbums] = useState<Set<string>>(new Set());
 
-  // When a filter is active, expand everything (matches Tk behaviour).
+  // Expand everything only on the *transition into* filtering (matches Tk
+  // behaviour) — not on every keystroke. Previously the `artists` dep made
+  // this re-expand (two full Set rebuilds + a whole-tree re-render) on each
+  // character typed, which was the bulk of the search lag.
+  const wasFiltering = useRef(false);
   useEffect(() => {
-    if (anyFilter) {
+    if (anyFilter && !wasFiltering.current) {
       setOpenArtists(new Set(artists.map((a) => a.name)));
-      setOpenAlbums(new Set(artists.flatMap((a) => a.albums.map((al) => `${a.name}//${al.name}`))));
+      setOpenAlbums(
+        new Set(
+          artists.flatMap((a) => a.albums.map((al) => `${a.name}//${al.name}`)),
+        ),
+      );
     }
+    wasFiltering.current = anyFilter;
   }, [anyFilter, artists]);
 
   function toggleArtist(name: string) {
