@@ -34,8 +34,11 @@ interface WorkspacePanelProps {
   libRoot: string;
   anyFilter: boolean;
   /** Shared workspace destination — set in the Source & destination panel;
-   *  read-only here (drives the mirror-create + folder list). */
+   *  read-only here (drives the mirror-create + orphan list). */
   dest: string;
+  /** Source releases ("artist/release") — clip folders whose artist/release
+   *  isn't in here are orphans (no matching release in the library). */
+  sourceRels: Set<string>;
   onStatus: (s: { text: string; tone: "muted" | "warn" | "ok" | "alert" }) => void;
   /**
    * Lifts the mirror state (running / done / err) up so the shared
@@ -54,6 +57,7 @@ export function WorkspacePanel({
   libRoot,
   anyFilter,
   dest,
+  sourceRels,
   onStatus,
   onMirrorState,
 }: WorkspacePanelProps) {
@@ -163,9 +167,22 @@ export function WorkspacePanel({
   const running = state.kind === "running";
   const canRun = !!dest.trim() && pairs.length > 0 && !running;
 
+  // Orphans = clip folders whose artist/release has no matching source
+  // release. The library tree already shows in-source releases + their sampled
+  // status (gaps); orphans are the residue it can't show, so the Mirror panel
+  // narrows to just these — the cleanup targets (renamed/removed sources, stale
+  // leftovers like the old Timber (A)/(B)).
+  const orphans = useMemo(
+    () =>
+      folders.filter(
+        (f) => !sourceRels.has(f.rel.split("/").slice(0, 2).join("/")),
+      ),
+    [folders, sourceRels],
+  );
+
   return (
     <Section
-      title="Mirror tree"
+      title="Sample tree"
       icon={<FolderTree size={16} />}
       onTitleClick={() => setExpanded(!expanded)}
       right={
@@ -253,11 +270,16 @@ export function WorkspacePanel({
             </button>
           </div>
 
-          {/* Manage — add a folder to the mirror, or send leaf folders to the
-              OS trash (recoverable). Empty folders (hollow dot, count 0) are
-              the usual targets: stale sampling leftovers. */}
+          {/* Orphans — clip folders with no matching release in the library
+              (renamed/removed source, stale leftovers). The in-source releases
+              live in the Library tree; only the residue surfaces here. Add a
+              folder, or send orphans to the OS trash (recoverable). */}
           {dest.trim() && (
             <div className="mt-2 space-y-2">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted">
+                <span>orphan clips</span>
+                <span className="tabular-nums">{orphans.length}</span>
+              </div>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -292,9 +314,15 @@ export function WorkspacePanel({
                 </button>
               </div>
 
-              {folders.length > 0 && (
+              {orphans.length === 0 ? (
+                <p className="text-[10px] text-muted px-1">
+                  {folders.length === 0
+                    ? "no clip folders yet"
+                    : "no orphans — every clip folder maps to a release"}
+                </p>
+              ) : (
                 <ul className="max-h-[12rem] overflow-auto rounded-md bg-bg/40 divide-y divide-surface/50">
-                  {folders.map((f) => (
+                  {orphans.map((f) => (
                     <li
                       key={f.path}
                       className="flex items-center gap-2 px-2.5 py-1.5 text-xs font-mono"

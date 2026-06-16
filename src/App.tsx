@@ -5,6 +5,7 @@ import {
   KeyRound,
   Lock,
   LogOut,
+  PanelRight,
   Radio,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
@@ -40,7 +41,7 @@ import {
 } from "./lib/nostr";
 import { usePersistedString } from "./lib/usePersistedString";
 import { useLibrary } from "./lib/library";
-import { sampleDestPath, sourceSignature } from "./lib/paths";
+import { sampleDestPath, sourceSignature, uniquePairs } from "./lib/paths";
 
 const SAMPLE_SECS = 10;
 const SAMPLE_START_OFFSET_SECS = 30;
@@ -85,6 +86,17 @@ export default function App() {
     relays,
     libRoot,
   } = useLibrary();
+  // Full set of source releases ("artist/release") — lets the Mirror panel
+  // flag orphan clip folders (clips on disk with no matching release).
+  const sourceRels = useMemo(
+    () =>
+      new Set(
+        uniquePairs(report?.rows ?? [], libRoot).map(
+          (p) => `${p.artist}/${p.release}`,
+        ),
+      ),
+    [report, libRoot],
+  );
   const [filter, setFilter] = useState<FilterState>({
     verdict: "All",
     search: "",
@@ -139,6 +151,13 @@ export default function App() {
     "1",
   );
   const libraryOpen = libraryExpanded === "1";
+  // Destination rail (Mirror orphans + feed) — collapsible so the Library
+  // (source) can go full-width. Persisted; default open.
+  const [railExpanded, setRailExpanded] = usePersistedString(
+    "afqc-tauri.rail.open",
+    "1",
+  );
+  const railOpen = railExpanded === "1";
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Track the current object URL so we can revoke it when playback ends
@@ -285,10 +304,9 @@ export default function App() {
         if (r) {
           setReport(r);
           setRoot(r.root);
-          setStatus({
-            text: `loaded ${r.rows.length.toLocaleString()} entries from last scan`,
-            tone: "muted",
-          });
+          // No "loaded N entries" status — the Scanner pinned line + the
+          // Library count already show it; keep the header chip quiet.
+          setStatus({ text: "ready", tone: "muted" });
         } else {
           setStatus({ text: "no saved report — click Re-scan", tone: "warn" });
         }
@@ -535,85 +553,87 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] gap-4 items-stretch">
-        {/* Left column: three operation panels in a top sub-row
-            (Scanner | Mirror tree | Destination/Sampler), then filters /
-            library tree (tree fills remaining height). Each panel still
-            owns its own progress strip — door open to lift them into a
-            shared output area later (Option B). */}
-        <div className="flex flex-col gap-4 min-w-0 min-h-0">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Source & destination — Scanner (source root + scan) over
-                Destination (dest + sample) in one card. Both render bare;
-                the dest editor lives only here now (Mirror tree reads it). */}
-            <Section
-              title="Source & destination"
-              icon={<ArrowRightLeft size={16} />}
+      <div className="flex-1 min-h-0 flex flex-col gap-4">
+        {/* Slim top strip — Source (scan config) and Destination (sample
+            config) side by side; the dest editor lives only here. The rail
+            toggle (right) collapses the destination rail so the Library can go
+            full-width. */}
+        <Section
+          title="Source & destination"
+          icon={<ArrowRightLeft size={16} />}
+          right={
+            <button
+              type="button"
+              onClick={() => setRailExpanded(railOpen ? "0" : "1")}
+              aria-pressed={railOpen}
+              title={
+                railOpen
+                  ? "Hide the destination rail (Mirror · feed)"
+                  : "Show the destination rail (Mirror · feed)"
+              }
+              className={cn(
+                "p-1.5 rounded-md transition-colors",
+                railOpen
+                  ? "bg-surface text-accent"
+                  : "text-muted hover:text-fg hover:bg-surface/50",
+              )}
             >
-              <div>
-                <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
-                  Source
-                </div>
-                <ScannerControls
-                  bare
-                  root={root}
-                  setRoot={setRoot}
-                  onReport={(r) => {
-                    setReport(r);
-                    setRoot(r.root);
-                  }}
-                  onStatus={setStatus}
-                  onScanState={setScanState}
-                  report={report}
-                />
-              </div>
-              <div className="border-t border-surface/50 pt-3">
-                <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
-                  Destination
-                </div>
-                <SamplerPanel
-                  bare
-                  rows={filteredRows}
-                  dest={workspaceDest}
-                  setDest={setWorkspaceDest}
-                  sampling={sampling}
-                  onSample={(tracks) =>
-                    runSample(
-                      anyFilter ? "filtered library" : "full library",
-                      tracks,
-                    )
-                  }
-                  onCancelSample={stopSample}
-                />
-              </div>
-            </Section>
-            <WorkspacePanel
-              rows={filteredRows}
-              libRoot={libRoot}
-              anyFilter={anyFilter}
-              dest={workspaceDest}
-              onStatus={setStatus}
-              onMirrorState={setMirrorState}
-            />
+              <PanelRight size={14} />
+            </button>
+          }
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <ScannerControls
+                bare
+                root={root}
+                setRoot={setRoot}
+                onReport={(r) => {
+                  setReport(r);
+                  setRoot(r.root);
+                }}
+                onStatus={setStatus}
+                onScanState={setScanState}
+                report={report}
+              />
+            </div>
+            <div className="lg:border-l lg:border-surface/50 lg:pl-4">
+              <SamplerPanel
+                bare
+                rows={filteredRows}
+                dest={workspaceDest}
+                setDest={setWorkspaceDest}
+                sampling={sampling}
+                onSample={(tracks) =>
+                  runSample(
+                    anyFilter ? "filtered library" : "full library",
+                    tracks,
+                  )
+                }
+                onCancelSample={stopSample}
+              />
+            </div>
           </div>
-          <OperationOutput
-            scan={scanState}
-            mirror={mirrorState}
-            sampling={sampling}
-            samplingCancelling={sampleCancelledRef.current}
-          />
+        </Section>
+
+        <OperationOutput
+          scan={scanState}
+          mirror={mirrorState}
+          sampling={sampling}
+          samplingCancelling={sampleCancelledRef.current}
+        />
+
+        {/* Main row — the Library (source) is the dominant surface, full-width
+            when the rail is collapsed; the destination rail (Mirror orphans +
+            feed) sits beside it on demand. */}
+        <div className="flex-1 min-h-0 flex gap-4">
           {/* Merged Library Section — filter band + tree under one title.
-              Collapse hides the filter band and overlays sample="sampled"
-              on the tree without touching the user's filter state. The
-              tree itself stays hierarchical and interactive in both
-              states. */}
+              Collapse hides the filter band and overlays sample="sampled". */}
           <Section
             title={libraryOpen ? "Library" : "Samples"}
             icon={<FolderTree size={16} />}
-            onTitleClick={() =>
-              setLibraryExpanded(libraryOpen ? "0" : "1")
-            }
-            className="flex-1 min-h-0"
+            onTitleClick={() => setLibraryExpanded(libraryOpen ? "0" : "1")}
+            className="flex-1 min-w-0 min-h-0"
             contentClassName="flex-1 min-h-0 flex flex-col gap-3"
           >
             {libraryOpen ? (
@@ -643,12 +663,22 @@ export default function App() {
               onPublishSample={(row) => setPublishTarget(row)}
             />
           </Section>
-        </div>
 
-        {/* Right column: Publish above Published-feed */}
-        <div className="flex flex-col gap-4 min-h-0 overflow-auto">
-          <NostrPanel identity={identity} setIdentity={setIdentity} />
-          <FeedPanel identity={identity} relays={relays} />
+          {railOpen && (
+            <div className="w-[340px] shrink-0 flex flex-col gap-4 min-h-0 overflow-auto">
+              <WorkspacePanel
+                rows={filteredRows}
+                libRoot={libRoot}
+                anyFilter={anyFilter}
+                dest={workspaceDest}
+                sourceRels={sourceRels}
+                onStatus={setStatus}
+                onMirrorState={setMirrorState}
+              />
+              <NostrPanel identity={identity} setIdentity={setIdentity} />
+              <FeedPanel identity={identity} relays={relays} />
+            </div>
+          )}
         </div>
       </div>
 
