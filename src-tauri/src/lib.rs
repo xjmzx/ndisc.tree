@@ -802,6 +802,115 @@ async fn scan_sample_dest(
     .map_err(|e| e.to_string())?
 }
 
+// ---------------------------------------------------------------------------
+// Mirror-tree folder management — manual add / delete on the mirror dest.
+// Delete goes to the OS trash (recoverable); add is a plain mkdir. Both are
+// strictly confined to inside the configured dest.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DestFolder {
+    /// Path relative to the dest, e.g. "Artist/Release".
+    rel: String,
+    /// Absolute path (the trash target).
+    path: String,
+    /// Direct audio-file count — 0 marks an empty folder (a prime delete
+    /// candidate, e.g. a stale sampling leftover).
+    audio_count: usize,
+}
+
+/// List the leaf folders (no child dirs — where files live) under the mirror
+/// dest, with their direct audio counts. Empties surface as the obvious
+/// deletion targets.
+#[tauri::command]
+async fn list_dest_folders(dest: String) -> Result<Vec<DestFolder>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<DestFolder>, String> {
+        let base = PathBuf::from(&dest);
+        if !base.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut out: Vec<DestFolder> = Vec::new();
+        for entry in WalkDir::new(&base).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_dir() {
+                continue;
+            }
+            let p = entry.path();
+            let has_subdir = fs::read_dir(p)
+                .map(|rd| rd.filter_map(|e| e.ok()).any(|e| e.path().is_dir()))
+                .unwrap_or(false);
+            if has_subdir {
+                continue; // not a leaf
+            }
+            let rel = match p.strip_prefix(&base) {
+                Ok(r) if !r.as_os_str().is_empty() => r,
+                _ => continue,
+            };
+            let audio_count = fs::read_dir(p)
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_file() && has_audio_ext(&e.path()))
+                        .count()
+                })
+                .unwrap_or(0);
+            out.push(DestFolder {
+                rel: rel.to_string_lossy().into_owned(),
+                path: p.to_string_lossy().into_owned(),
+                audio_count,
+            });
+        }
+        out.sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Move a folder to the OS trash. Hard guard: the target must canonicalize to
+/// a path strictly *inside* the dest and not be the dest itself — so a stray
+/// call can never trash the library or the dest root.
+#[tauri::command]
+async fn trash_dest_folder(dest: String, path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let base = PathBuf::from(&dest)
+            .canonicalize()
+            .map_err(|e| format!("destination: {e}"))?;
+        let target = PathBuf::from(&path)
+            .canonicalize()
+            .map_err(|e| format!("target: {e}"))?;
+        if target == base || !target.starts_with(&base) {
+            return Err("refusing to trash a path outside the mirror destination".into());
+        }
+        trash::delete(&target).map_err(|e| format!("trash failed: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Create a subfolder (relative path) under the mirror dest; returns its
+/// absolute path. Rejects absolute paths and `..` traversal.
+#[tauri::command]
+async fn create_dest_folder(dest: String, rel: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let base = PathBuf::from(&dest);
+        if !base.is_dir() {
+            return Err(format!("destination is not a directory: {dest}"));
+        }
+        let clean = rel.trim().trim_matches('/');
+        if clean.is_empty() {
+            return Err("empty folder name".into());
+        }
+        if rel.trim().starts_with('/') || clean.split('/').any(|c| c.is_empty() || c == "..") {
+            return Err("invalid folder path".into());
+        }
+        let target = base.join(clean);
+        fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        Ok(target.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Read the bytes of a sample clip so the renderer can feed them to an
 /// HTMLAudioElement via a Blob URL. The asset:// protocol on WebKit2GTK
 /// rejects local sample paths with NotSupportedError despite the scope
@@ -1305,6 +1414,9 @@ pub fn run() {
             sample_tracks,
             cancel_sample,
             scan_sample_dest,
+            list_dest_folders,
+            trash_dest_folder,
+            create_dest_folder,
             read_audio_bytes,
             nip98_sign_event,
             publish_file_metadata,

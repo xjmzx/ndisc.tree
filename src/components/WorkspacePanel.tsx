@@ -1,10 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderOpen, FolderTree, Hammer, ShieldCheck } from "lucide-react";
+import {
+  FolderOpen,
+  FolderTree,
+  Hammer,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Section } from "./Section";
 import { cn } from "../lib/cn";
 import { uniquePairs } from "../lib/paths";
-import { createMirrorTree, type MirrorResult, type ScanRow } from "../lib/tauri";
+import {
+  createDestFolder,
+  createMirrorTree,
+  listDestFolders,
+  trashDestFolder,
+  type DestFolder,
+  type MirrorResult,
+  type ScanRow,
+} from "../lib/tauri";
 import { usePersistedBool } from "../lib/usePersistedString";
 
 const EXPANDED_KEY = "afqc-tauri.mirrortree.expanded";
@@ -71,6 +87,63 @@ export function WorkspacePanel({
       defaultPath: dest || undefined,
     });
     if (typeof picked === "string") setDest(picked);
+  }
+
+  // --- Mirror-folder management (add / trash) ------------------------------
+  const [folders, setFolders] = useState<DestFolder[]>([]);
+  const [addName, setAddName] = useState("");
+  const [loadingFolders, setLoadingFolders] = useState(false);
+
+  async function refreshFolders() {
+    if (!dest.trim()) {
+      setFolders([]);
+      return;
+    }
+    setLoadingFolders(true);
+    try {
+      setFolders(await listDestFolders(dest));
+    } catch (e) {
+      onStatus({ text: `list folders failed: ${e}`, tone: "alert" });
+    } finally {
+      setLoadingFolders(false);
+    }
+  }
+
+  // Load the folder list whenever the panel opens or the dest changes.
+  useEffect(() => {
+    if (expanded && dest.trim()) refreshFolders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, dest]);
+
+  async function addFolder() {
+    const name = addName.trim();
+    if (!name) return;
+    try {
+      await createDestFolder(dest, name);
+      setAddName("");
+      onStatus({ text: `created ${name}`, tone: "ok" });
+      refreshFolders();
+    } catch (e) {
+      onStatus({ text: `create failed: ${e}`, tone: "alert" });
+    }
+  }
+
+  async function trashFolder(f: DestFolder) {
+    const n = f.audioCount;
+    if (
+      !confirm(
+        `Move "${f.rel}" to the trash?\n\n${n} audio file${n === 1 ? "" : "s"} — recoverable from your desktop trash.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await trashDestFolder(dest, f.path);
+      onStatus({ text: `trashed ${f.rel}`, tone: "ok" });
+      refreshFolders();
+    } catch (e) {
+      onStatus({ text: `trash failed: ${e}`, tone: "alert" });
+    }
   }
 
   async function createMirror() {
@@ -202,6 +275,79 @@ export function WorkspacePanel({
             </button>
           </div>
 
+          {/* Manage — add a folder to the mirror, or send leaf folders to the
+              OS trash (recoverable). Empty folders (hollow dot, count 0) are
+              the usual targets: stale sampling leftovers. */}
+          {dest.trim() && (
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={addName}
+                  onChange={(e) => setAddName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addFolder()}
+                  placeholder="add folder (Artist/Release)…"
+                  spellCheck={false}
+                  className="flex-1 px-2.5 py-1.5 rounded-md bg-surface text-fg text-xs
+                             placeholder:text-muted outline-none border border-transparent
+                             focus:border-accent/50"
+                />
+                <button
+                  onClick={addFolder}
+                  disabled={!addName.trim()}
+                  title="Create this folder under the destination"
+                  className="px-2.5 py-1.5 rounded-md bg-surface hover:bg-surfaceHover
+                             text-fg text-xs disabled:opacity-50 flex items-center gap-1"
+                >
+                  <Plus size={12} /> add
+                </button>
+                <button
+                  onClick={refreshFolders}
+                  title="Refresh folder list"
+                  aria-label="Refresh folder list"
+                  className="px-2 py-1.5 rounded-md bg-surface hover:bg-surfaceHover text-muted"
+                >
+                  <RefreshCw
+                    size={12}
+                    className={loadingFolders ? "animate-spin" : ""}
+                  />
+                </button>
+              </div>
+
+              {folders.length > 0 && (
+                <ul className="max-h-[12rem] overflow-auto rounded-md bg-bg/40 divide-y divide-surface/50">
+                  {folders.map((f) => (
+                    <li
+                      key={f.path}
+                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs font-mono"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "w-2 h-2 rounded-full shrink-0",
+                          f.audioCount > 0 ? "bg-accent" : "border border-muted/70",
+                        )}
+                      />
+                      <span className="truncate flex-1" title={f.path}>
+                        {f.rel}
+                      </span>
+                      <span className="text-muted tabular-nums shrink-0">
+                        {f.audioCount}
+                      </span>
+                      <button
+                        onClick={() => trashFolder(f)}
+                        title={`Move "${f.rel}" to trash (${f.audioCount} audio file${f.audioCount === 1 ? "" : "s"})`}
+                        aria-label={`Trash ${f.rel}`}
+                        className="text-muted hover:text-alert transition-colors shrink-0"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </>
       )}
     </Section>

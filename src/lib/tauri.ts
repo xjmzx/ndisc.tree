@@ -94,6 +94,37 @@ export async function openFolder(path: string): Promise<void> {
   return invoke("open_folder", { path });
 }
 
+// --- Mirror-tree folder management -----------------------------------------
+
+/// A leaf folder under the mirror dest. `audioCount === 0` = an empty folder
+/// (e.g. a stale sampling leftover) — the obvious deletion candidate.
+export interface DestFolder {
+  rel: string; // "Artist/Release" relative to dest
+  path: string; // absolute
+  audioCount: number;
+}
+
+export async function listDestFolders(dest: string): Promise<DestFolder[]> {
+  return invoke<DestFolder[]>("list_dest_folders", { dest });
+}
+
+/// Move a mirror-dest folder to the OS trash (recoverable). Guarded server-side
+/// to paths strictly inside `dest`.
+export async function trashDestFolder(
+  dest: string,
+  path: string,
+): Promise<void> {
+  return invoke("trash_dest_folder", { dest, path });
+}
+
+/// mkdir a relative folder under the mirror dest; returns its absolute path.
+export async function createDestFolder(
+  dest: string,
+  rel: string,
+): Promise<string> {
+  return invoke<string>("create_dest_folder", { dest, rel });
+}
+
 export async function onScanProgress(
   cb: (p: ScanProgress) => void,
 ): Promise<UnlistenFn> {
