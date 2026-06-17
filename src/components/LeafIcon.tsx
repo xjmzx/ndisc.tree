@@ -1,13 +1,11 @@
 import type { SVGProps } from "react";
+import { cn } from "../lib/cn";
 
 /**
  * The suite's "leaf" glyph — a simple almond blade + midrib, drawn in the
- * lucide idiom (24×24, currentColor stroke, round caps/joins, stroke-width 2)
- * so it drops in anywhere a lucide icon does: `<LeafIcon size={14} />`.
- *
- * Deliberately simplified vs. the label-art reference — a clean leaf shape is
- * the brief, not a literal trace. This is the mark for sample/clip affordances
- * across ndisc.tree (replacing the scissors family).
+ * lucide idiom (24×24, currentColor stroke, round caps, stroke-width 2). Used
+ * for affordance / brand marks (the clip filter toggle, per-scope sample
+ * buttons, the Sample panel header). Quantity is shown with LeafDots.
  */
 export function LeafIcon({
   size = 24,
@@ -32,5 +30,40 @@ export function LeafIcon({
       {/* midrib */}
       <path d="M12 20V5" />
     </svg>
+  );
+}
+
+/**
+ * Leaf-dots — the suite's diagrammatic quantity glyph (shared with ndisc /
+ * ndisc.smpl). A leaf is a track; each track is one flat, muted leaf-green dot,
+ * and the dots stack into a compact cluster (wrap at 5 per row) so the count
+ * itself is the picture — leaves piling on a branch. Renders nothing for 0.
+ * Capped at `max` (default 99); the exact figure stays in the hover title.
+ */
+export function LeafDots({
+  n,
+  max = 99,
+  unit = "track",
+  className,
+}: {
+  n: number | null | undefined;
+  max?: number;
+  unit?: string;
+  className?: string;
+}) {
+  const raw = Math.max(n ?? 0, 0);
+  const count = Math.min(raw, max);
+  if (count <= 0) return null;
+  const title = `${raw}${raw >= max ? "+" : ""} ${unit}${raw === 1 ? "" : "s"}`;
+  return (
+    <span
+      className={cn("inline-grid grid-cols-5 gap-[2px] w-max", className)}
+      title={title}
+      aria-label={title}
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className="w-1 h-1 rounded-full bg-ok/70" />
+      ))}
+    </span>
   );
 }

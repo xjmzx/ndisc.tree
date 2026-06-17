@@ -8,7 +8,7 @@ import {
   Play,
   Sprout,
 } from "lucide-react";
-import { LeafIcon } from "./LeafIcon";
+import { LeafIcon, LeafDots } from "./LeafIcon";
 import { cn } from "../lib/cn";
 import { splitPath } from "../lib/paths";
 import { openFolder, type ScanRow, type Verdict } from "../lib/tauri";
@@ -298,19 +298,14 @@ export function LibraryTree({
                 >
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span className="flex-1 truncate">{artist.name}</span>
-                  {/* Foliage meter — plants = releases, leaves = tracks.
-                      Both fixed three-slot gauges (magnitude, not exact
-                      counts) so the column aligns on every row. */}
+                  {/* Releases as a sprout meter — the artist aggregate stays a
+                      magnitude gauge. Track counts (leaf-dots) live at the
+                      release level below, per the suite's release-level model. */}
                   <span className="flex items-center gap-2 shrink-0">
                     <Meter
                       n={artist.albums.length}
                       kind="plant"
                       title={`${artist.albums.length} release${artist.albums.length === 1 ? "" : "s"}`}
-                    />
-                    <Meter
-                      n={artist.totalTracks}
-                      kind="leaf"
-                      title={`${artist.totalTracks.toLocaleString()} track${artist.totalTracks === 1 ? "" : "s"}`}
                     />
                   </span>
                 </button>
@@ -359,15 +354,10 @@ export function LibraryTree({
                         >
                           {alOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                           <span className="flex-1 truncate">{album.name}</span>
-                          {/* leaves = tracks (one release ⇒ no plant meter);
-                              right-anchored so it aligns under the artist
-                              leaf meter above. */}
-                          <span className="flex items-center shrink-0">
-                            <Meter
-                              n={album.tracks.length}
-                              kind="leaf"
-                              title={`${album.tracks.length.toLocaleString()} track${album.tracks.length === 1 ? "" : "s"}`}
-                            />
+                          {/* leaf-dots = tracks on this release (branch) —
+                              one muted-green dot per track, stacked. */}
+                          <span className="flex items-center justify-end shrink-0">
+                            <LeafDots n={album.tracks.length} />
                           </span>
                         </button>
                         <button
