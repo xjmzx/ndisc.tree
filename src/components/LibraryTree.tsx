@@ -7,7 +7,6 @@ import {
   Pause,
   Play,
   Sprout,
-  Upload,
 } from "lucide-react";
 import { LeafIcon } from "./LeafIcon";
 import { cn } from "../lib/cn";
@@ -161,8 +160,10 @@ interface LibraryTreeProps {
   onPlaySample: (row: ScanRow) => void;
   /** Compute the same signature App uses, so rows can match `playingSig`. */
   signatureOf: (row: ScanRow) => string;
-  /** Open the publish dialog for a row's sampled clip. */
-  onPublishSample: (row: ScanRow) => void;
+  /** Source-signature of the row selected into the left Sample panel. */
+  selectedSig: string | null;
+  /** Select a track into the left Sample panel (info · preview · publish). */
+  onSelect: (row: ScanRow) => void;
 }
 
 export function LibraryTree({
@@ -175,7 +176,8 @@ export function LibraryTree({
   playingSig,
   onPlaySample,
   signatureOf,
-  onPublishSample,
+  selectedSig,
+  onSelect,
 }: LibraryTreeProps) {
   const artists = useMemo(() => group(rows, libRoot), [rows, libRoot]);
   const [openArtists, setOpenArtists] = useState<Set<string>>(new Set());
@@ -384,16 +386,19 @@ export function LibraryTree({
                         album.tracks.map((t, i) => {
                           const sampled = hasSample(t);
                           const isPlaying = sampled && playingSig === signatureOf(t);
+                          const selected = selectedSig === signatureOf(t);
                           return (
                             <div
                               key={t.path}
+                              onClick={() => onSelect(t)}
                               onDoubleClick={() => openTrackFolder(t)}
                               title={t.path}
                               className={cn(
-                                "grid grid-cols-[16px_16px_1fr_120px_90px_70px] gap-2 items-center",
+                                "grid grid-cols-[16px_1fr_120px_90px_70px] gap-2 items-center",
                                 "pl-12 pr-3 py-0.5 text-xs font-mono cursor-pointer",
                                 "hover:bg-surface/40",
                                 i % 2 === 1 && "bg-bg/40",
+                                selected && "bg-accent/15 hover:bg-accent/20",
                               )}
                             >
                               {sampled ? (
@@ -424,23 +429,6 @@ export function LibraryTree({
                                   ) : (
                                     <Play size={11} />
                                   )}
-                                </button>
-                              ) : (
-                                <span aria-hidden className="block w-4 h-4" />
-                              )}
-                              {sampled ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onPublishSample(t);
-                                  }}
-                                  title="Publish to Nostr (kind:1063)"
-                                  aria-label={`Publish ${t._track} to Nostr`}
-                                  className="flex items-center justify-center rounded
-                                             text-muted hover:text-accent"
-                                >
-                                  <Upload size={11} />
                                 </button>
                               ) : (
                                 <span aria-hidden className="block w-4 h-4" />

@@ -3,13 +3,11 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Check,
-  Columns2,
+  ChevronRight,
   FolderTree,
   KeyRound,
   Lock,
   LogOut,
-  PanelLeftClose,
-  PanelRightClose,
   Radio,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
@@ -20,7 +18,8 @@ import { SamplerPanel } from "./components/SamplerPanel";
 import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
 import { OperationOutput, type MirrorState } from "./components/OperationOutput";
-import { PublishSampleDialog } from "./components/PublishSampleDialog";
+import { SamplePanel } from "./components/SamplePanel";
+import { CollapsedStrip } from "./components/CollapsedStrip";
 import { Section } from "./components/Section";
 import { MirrorControls, OrphanStrip } from "./components/MirrorControls";
 import { useMirror } from "./lib/useMirror";
@@ -44,7 +43,7 @@ import {
   shortNpub,
   type Identity,
 } from "./lib/nostr";
-import { usePersistedString } from "./lib/usePersistedString";
+import { usePersistedBool } from "./lib/usePersistedString";
 import { useLibrary } from "./lib/library";
 import { sampleDestPath, sourceSignature, uniquePairs } from "./lib/paths";
 
@@ -134,9 +133,9 @@ export default function App() {
   // Reusing the element rather than creating a new Audio() per click keeps
   // WebKit2GTK happy — Web Audio output is broken on this stack, so
   // HTMLMediaElement is the only working path (same pattern as FeedPanel).
-  // Row pending a "publish to Nostr" click — when non-null the dialog
-  // overlays the UI; on close (cancel or success) we reset to null.
-  const [publishTarget, setPublishTarget] = useState<ScanRow | null>(null);
+  // The track selected into the left Sample panel (info · preview · publish).
+  // Replaces the old per-row publish modal — selection drives the left flank.
+  const [selectedRow, setSelectedRow] = useState<ScanRow | null>(null);
 
   // Lifted state for the shared OperationOutput strip below the three
   // operation panels. Each panel emits its own live state up via a
@@ -148,12 +147,18 @@ export default function App() {
   }>({ active: false, progress: null, cancelling: false });
   const [mirrorState, setMirrorState] = useState<MirrorState>({ kind: "idle" });
 
-  // Main-row layout — three ways to split the Library (source) and the
-  // Nostr · Radio rail: full Library, split (both), or full Radio. Persisted.
-  const [layout, setLayout] = usePersistedString("afqc-tauri.layout", "split");
-  const showLibrary = layout !== "radio";
-  const showRail = layout !== "library";
-  const railFull = layout === "radio";
+  // Main-row layout — [ Sample ][ Library ][ Radio ], the collapse-flank model
+  // shared with ndisc.smpl. Each flank collapses independently to a thin strip,
+  // reclaiming its width for the Library; both collapsed ⇒ full-width Library.
+  // (Replaces the old 3-way switcher.) Persisted.
+  const [leftCollapsed, setLeftCollapsed] = usePersistedBool(
+    "afqc-tauri.leftCollapsed",
+    false,
+  );
+  const [rightCollapsed, setRightCollapsed] = usePersistedBool(
+    "afqc-tauri.rightCollapsed",
+    false,
+  );
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Track the current object URL so we can revoke it when playback ends
@@ -589,38 +594,10 @@ export default function App() {
       <div className="flex-1 min-h-0 flex flex-col gap-4">
         {/* Slim top strip — Source (scan config) and Destination (sample
             config + mirror-tree controls) side by side; the dest editor lives
-            only here. The rail toggle (right) collapses the Nostr · Radio rail
-            so the Library can go full-width. */}
+            only here. Full-width above the [ Sample ][ Library ][ Radio ] row. */}
         <Section
           title="Source & destination"
           icon={<ArrowRightLeft size={16} />}
-          right={
-            <div className="flex items-center gap-0.5 rounded-md bg-bg/40 p-0.5">
-              {(
-                [
-                  ["library", <PanelRightClose size={14} />, "Full Library"],
-                  ["split", <Columns2 size={14} />, "Library + Radio"],
-                  ["radio", <PanelLeftClose size={14} />, "Full Radio"],
-                ] as const
-              ).map(([key, icon, title]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setLayout(key)}
-                  aria-pressed={layout === key}
-                  title={title}
-                  className={cn(
-                    "p-1.5 rounded transition-colors",
-                    layout === key
-                      ? "bg-surface text-accent"
-                      : "text-muted hover:text-fg hover:bg-surface/40",
-                  )}
-                >
-                  {icon}
-                </button>
-              ))}
-            </div>
-          }
         >
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
@@ -668,14 +645,33 @@ export default function App() {
           samplingCancelling={sampleCancelledRef.current}
         />
 
-        {/* Main row — the Library (source) is the dominant surface, full-width
-            when the rail is collapsed; the Nostr · Radio rail sits beside it on
-            demand. */}
+        {/* Main row — [ Sample ][ Library ][ Radio ]. The Library is the
+            dominant center surface; each flank collapses to a strip to give it
+            more width. Mirrors ndisc.smpl's flanked-Library layout. */}
         <div className="flex-1 min-h-0 flex gap-4">
-          {/* Library — filter band (incl. the all/has-clip/no-clip toggle) +
-              tree. The old library/samples toggle was dropped: it duplicated
-              the clip-exists filter (Samples == has-clip). Hidden in Full Radio. */}
-          {showLibrary && (
+          <SamplePanel
+            row={selectedRow}
+            libRoot={libRoot}
+            workspaceDest={workspaceDest}
+            relays={relays}
+            identityNpub={identity?.npub ?? null}
+            hasClip={
+              !!selectedRow &&
+              sampledSignatures.has(sourceSignature(selectedRow.path, libRoot))
+            }
+            isPlaying={
+              !!selectedRow &&
+              playingSig === sourceSignature(selectedRow.path, libRoot)
+            }
+            onPlay={() => selectedRow && playSample(selectedRow)}
+            onStatus={setStatus}
+            collapsed={leftCollapsed}
+            onToggleCollapsed={() => setLeftCollapsed(!leftCollapsed)}
+          />
+
+          {/* Library — filter band (incl. the all/has-clip/no-clip leaf toggle)
+              + tree. Always the center column; clicking a track row selects it
+              into the Sample panel on the left. */}
           <Section
             title="Library"
             icon={<FolderTree size={16} />}
@@ -715,18 +711,37 @@ export default function App() {
               playingSig={playingSig}
               onPlaySample={playSample}
               signatureOf={(row) => sourceSignature(row.path, libRoot)}
-              onPublishSample={(row) => setPublishTarget(row)}
+              selectedSig={
+                selectedRow ? sourceSignature(selectedRow.path, libRoot) : null
+              }
+              onSelect={setSelectedRow}
             />
           </Section>
-          )}
 
-          {showRail && (
-            <div
-              className={cn(
-                "flex flex-col gap-4 min-h-0",
-                railFull ? "flex-1 min-w-0" : "w-[340px] shrink-0",
-              )}
-            >
+          {/* Right flank — Radio (Nostr identity + kind:1063 feed). Collapses
+              to a strip like the Sample flank; auburn tint matches smpl's
+              Publish panel. */}
+          {rightCollapsed ? (
+            <CollapsedStrip
+              label="Radio"
+              icon={<Radio size={16} />}
+              side="right"
+              onExpand={() => setRightCollapsed(false)}
+              className="border-auburn/30"
+            />
+          ) : (
+            <div className="w-[340px] shrink-0 flex flex-col gap-3 min-h-0">
+              <div className="flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setRightCollapsed(true)}
+                  title="Collapse Radio"
+                  aria-label="Collapse Radio"
+                  className="p-1 rounded text-muted hover:text-fg hover:bg-surface/40"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
               <NostrPanel identity={identity} setIdentity={setIdentity} />
               <FeedPanel identity={identity} relays={relays} />
             </div>
@@ -792,22 +807,6 @@ export default function App() {
         </span>
       </footer>
 
-      {publishTarget && (
-        <PublishSampleDialog
-          row={publishTarget}
-          libRoot={libRoot}
-          workspaceDest={workspaceDest}
-          relays={relays}
-          identityNpub={identity?.npub ?? null}
-          onClose={() => {
-            setPublishTarget(null);
-            // Refresh in case the publish flow had side effects worth
-            // surfacing later (e.g. once we add a has-published indicator).
-            refreshSampledSignatures(workspaceDest);
-          }}
-          onStatus={setStatus}
-        />
-      )}
     </div>
   );
 }
