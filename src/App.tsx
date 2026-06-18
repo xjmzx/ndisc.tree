@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FolderTree,
   KeyRound,
+  LineChart,
   Lock,
   LogOut,
   Radio,
@@ -18,8 +19,12 @@ import { SamplerPanel } from "./components/SamplerPanel";
 import { Filters, type FilterState } from "./components/Filters";
 import { LibraryTree } from "./components/LibraryTree";
 import { OperationOutput, type MirrorState } from "./components/OperationOutput";
-import { SamplePanel } from "./components/SamplePanel";
+import { SampleDetails } from "./components/SampleDetails";
+import { PublishPanel } from "./components/PublishPanel";
 import { CollapsedStrip } from "./components/CollapsedStrip";
+import { DotForest } from "./components/LeafIcon";
+import { ToolbarIconButton } from "./components/ToolbarIconButton";
+import { StatsView } from "./components/StatsView";
 import { Section } from "./components/Section";
 import { MirrorControls, OrphanStrip } from "./components/MirrorControls";
 import { useMirror } from "./lib/useMirror";
@@ -127,6 +132,40 @@ export default function App() {
   const [sampledSignatures, setSampledSignatures] = useState<Set<string>>(
     () => new Set(),
   );
+  // Locally-tracked "published" clips — source-signatures of clips published
+  // to Nostr from the Sample panel. Persisted so the library status dots
+  // (sampled → published) survive restarts. Reflects only publishes made in
+  // this app; no relay re-verification (see the memory note on the accurate
+  // kind:1063-join alternative).
+  const [publishedSignatures, setPublishedSignatures] = useState<Set<string>>(
+    () => {
+      try {
+        const raw = localStorage.getItem("afqc-tauri.published");
+        return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+      } catch {
+        return new Set();
+      }
+    },
+  );
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "afqc-tauri.published",
+        JSON.stringify([...publishedSignatures]),
+      );
+    } catch {
+      /* storage disabled — published state just won't persist */
+    }
+  }, [publishedSignatures]);
+  function markPublished(row: ScanRow) {
+    const sig = sourceSignature(row.path, libRoot);
+    setPublishedSignatures((prev) => {
+      if (prev.has(sig)) return prev;
+      const next = new Set(prev);
+      next.add(sig);
+      return next;
+    });
+  }
   // Sample playback — single HTMLAudioElement reused across rows, one
   // clip at a time. `playingSig` is the source-signature of the row whose
   // clip is currently playing (matches the keys used in `sampledSignatures`).
@@ -151,6 +190,8 @@ export default function App() {
   // shared with ndisc.smpl. Each flank collapses independently to a thin strip,
   // reclaiming its width for the Library; both collapsed ⇒ full-width Library.
   // (Replaces the old 3-way switcher.) Persisted.
+  // Main view — the library work area, or the stats page (ndisc's pattern).
+  const [view, setView] = useState<"library" | "stats">("library");
   const [leftCollapsed, setLeftCollapsed] = usePersistedBool(
     "afqc-tauri.leftCollapsed",
     false,
@@ -574,6 +615,15 @@ export default function App() {
             version chip, top-left). Balances the 1fr title column so the
             middle module stays centered. */}
         <div className="hidden md:flex items-center justify-end gap-2 mt-1">
+          {/* Stats toggle — borrows ndisc's digital-tone toolbar button. */}
+          <ToolbarIconButton
+            tone="digital"
+            pressed={view === "stats"}
+            title={view === "stats" ? "Back to library" : "Library quality stats"}
+            onClick={() => setView((v) => (v === "stats" ? "library" : "stats"))}
+          >
+            <LineChart size={14} />
+          </ToolbarIconButton>
           {/* Forget-identity chip — only when signed in (the ndisc/smpl
               pattern). Sign-in itself lives in the NostrPanel. */}
           {identity && (
@@ -591,6 +641,9 @@ export default function App() {
         </div>
       </header>
 
+      {view === "stats" ? (
+        <StatsView counts={counts} />
+      ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-4">
         {/* Slim top strip — Source (scan config) and Destination (sample
             config + mirror-tree controls) side by side; the dest editor lives
@@ -649,25 +702,48 @@ export default function App() {
             dominant center surface; each flank collapses to a strip to give it
             more width. Mirrors ndisc.smpl's flanked-Library layout. */}
         <div className="flex-1 min-h-0 flex gap-4">
-          <SamplePanel
-            row={selectedRow}
-            libRoot={libRoot}
-            workspaceDest={workspaceDest}
-            relays={relays}
-            identityNpub={identity?.npub ?? null}
-            hasClip={
-              !!selectedRow &&
-              sampledSignatures.has(sourceSignature(selectedRow.path, libRoot))
-            }
-            isPlaying={
-              !!selectedRow &&
-              playingSig === sourceSignature(selectedRow.path, libRoot)
-            }
-            onPlay={() => selectedRow && playSample(selectedRow)}
-            onStatus={setStatus}
-            collapsed={leftCollapsed}
-            onToggleCollapsed={() => setLeftCollapsed(!leftCollapsed)}
-          />
+          {/* Left flank — Sample details + Publish stacked, collapsing
+              together to one strip. */}
+          {leftCollapsed ? (
+            <CollapsedStrip
+              label="Sample"
+              icon={<span className="inline-block w-2 h-2 rounded-full bg-ok/70" />}
+              side="left"
+              onExpand={() => setLeftCollapsed(false)}
+              className="border-accent/30"
+            />
+          ) : (
+            <div className="w-[300px] shrink-0 flex flex-col gap-4 min-h-0">
+              <SampleDetails
+                row={selectedRow}
+                libRoot={libRoot}
+                workspaceDest={workspaceDest}
+                hasClip={
+                  !!selectedRow &&
+                  sampledSignatures.has(sourceSignature(selectedRow.path, libRoot))
+                }
+                isPlaying={
+                  !!selectedRow &&
+                  playingSig === sourceSignature(selectedRow.path, libRoot)
+                }
+                onPlay={() => selectedRow && playSample(selectedRow)}
+                onCollapse={() => setLeftCollapsed(true)}
+              />
+              <PublishPanel
+                row={selectedRow}
+                libRoot={libRoot}
+                workspaceDest={workspaceDest}
+                relays={relays}
+                identityNpub={identity?.npub ?? null}
+                hasClip={
+                  !!selectedRow &&
+                  sampledSignatures.has(sourceSignature(selectedRow.path, libRoot))
+                }
+                onPublished={markPublished}
+                onStatus={setStatus}
+              />
+            </div>
+          )}
 
           {/* Library — filter band (incl. the all/has-clip/no-clip leaf toggle)
               + tree. Always the center column; clicking a track row selects it
@@ -708,6 +784,9 @@ export default function App() {
               hasSample={(row) =>
                 sampledSignatures.has(sourceSignature(row.path, libRoot))
               }
+              isPublished={(row) =>
+                publishedSignatures.has(sourceSignature(row.path, libRoot))
+              }
               playingSig={playingSig}
               onPlaySample={playSample}
               signatureOf={(row) => sourceSignature(row.path, libRoot)}
@@ -724,7 +803,7 @@ export default function App() {
           {rightCollapsed ? (
             <CollapsedStrip
               label="Radio"
-              icon={<Radio size={16} />}
+              icon={<DotForest />}
               side="right"
               onExpand={() => setRightCollapsed(false)}
               className="border-auburn/30"
@@ -748,6 +827,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
 
       <footer className="shrink-0 rounded-lg bg-panel border border-surface/60
                          px-4 py-2 flex flex-wrap items-center justify-between

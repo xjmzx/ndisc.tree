@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
-  Headphones,
   Heart,
   Loader2,
   RefreshCw,
@@ -12,6 +11,7 @@ import {
 import { nip19 } from "nostr-tools";
 import { AudioPlayer } from "./AudioPlayer";
 import { Section } from "./Section";
+import { DotForest } from "./LeafIcon";
 import { cn } from "../lib/cn";
 import { type Identity, shortNpub } from "../lib/nostr";
 import { useReactions } from "../hooks/useReactions";
@@ -263,7 +263,7 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
   return (
     <Section
       title="Radio"
-      icon={<Headphones size={16} aria-label="Radio — published samples on the wire" />}
+      icon={<DotForest className="mt-0.5" />}
       className="flex-1 min-h-0"
       contentClassName="flex-1 min-h-0 flex flex-col gap-2"
     >

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { VERDICTS, type Verdict } from "../lib/tauri";
-import { cn } from "../lib/cn";
-import { LeafIcon } from "./LeafIcon";
+import { DotTree } from "./LeafIcon";
 
 export type SampleFilter = "all" | "sampled" | "unsampled";
 
@@ -82,27 +81,26 @@ export function Filters({ filter, setFilter }: FiltersProps) {
         />
       </div>
 
-      {/* Clip-exists filter — one leaf toggle that cycles the three states:
-          off (grey, all) → has clip (green) → no clip (purple) → off. A single
-          button reads as a toggle; colour carries the state. Square-rounded bg,
-          leaf sized near-max to the control height, leaning ~10° past 12:00. */}
+      {/* Clip-exists filter — one dot-tree toggle cycling the three states:
+          off (grey, all) → has clip (green) → no clip (mauve) → off. A single
+          button reads as a toggle; the tree's canopy colour carries the state. */}
       {(() => {
         const next: Record<SampleFilter, SampleFilter> = {
           all: "sampled",
           sampled: "unsampled",
           unsampled: "all",
         };
-        const STATE: Record<SampleFilter, { cls: string; title: string }> = {
+        const STATE: Record<SampleFilter, { dot: string; title: string }> = {
           all: {
-            cls: "bg-surface text-muted hover:text-fg",
+            dot: "bg-muted/50",
             title: "Clip filter off — all tracks. Click to show only tracks with a clip.",
           },
           sampled: {
-            cls: "bg-accent text-bg",
+            dot: "bg-ok/80",
             title: "Showing only tracks with a clip. Click to show only tracks without one.",
           },
           unsampled: {
-            cls: "bg-mauve text-bg",
+            dot: "bg-mauve",
             title: "Showing only tracks without a clip. Click to clear.",
           },
         };
@@ -114,12 +112,10 @@ export function Filters({ filter, setFilter }: FiltersProps) {
             aria-pressed={filter.sample !== "all"}
             aria-label="Clip filter"
             title={s.title}
-            className={cn(
-              "flex items-center justify-center h-9 w-9 rounded-md transition-colors",
-              s.cls,
-            )}
+            className="flex items-center justify-center h-9 w-9 rounded-md
+                       bg-surface hover:bg-surfaceHover transition-colors"
           >
-            <LeafIcon size={28} className="rotate-[10deg]" />
+            <DotTree dotClass={s.dot} />
           </button>
         );
       })()}

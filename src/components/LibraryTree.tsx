@@ -6,9 +6,8 @@ import {
   ChevronsUpDown,
   Pause,
   Play,
-  Sprout,
 } from "lucide-react";
-import { LeafIcon, LeafDots } from "./LeafIcon";
+import { LeafDots, ReleaseTree } from "./LeafIcon";
 import { cn } from "../lib/cn";
 import { splitPath } from "../lib/paths";
 import { openFolder, type ScanRow, type Verdict } from "../lib/tauri";
@@ -85,50 +84,19 @@ function countsFor(tracks: TrackRow[]): Record<Verdict, number> {
   return c;
 }
 
-/**
- * Foliage meter — a fixed-width magnitude gauge. Three slots of the same
- * glyph (leaves for tracks, sprouts for releases); the first `litCount(n)`
- * are lit, the rest dimmed. The exact figure is unimportant on the row (it
- * lives in the title/hover) — the point is a glanceable "how much", and the
- * fixed three-slot width keeps every row aligned across all filtered views.
- */
-function litCount(n: number, kind: "leaf" | "plant"): number {
-  if (n <= 0) return 0;
-  if (kind === "leaf") return n >= 50 ? 3 : n >= 10 ? 2 : 1;
-  return n >= 10 ? 3 : n >= 3 ? 2 : 1;
-}
-
-function Meter({
-  n,
-  kind,
-  title,
-}: {
-  n: number;
-  kind: "leaf" | "plant";
-  title: string;
-}) {
-  const lit = litCount(n, kind);
-  const Glyph = kind === "leaf" ? LeafIcon : Sprout;
-  return (
-    <span
-      className="inline-flex items-center gap-0.5"
-      title={title}
-      aria-label={title}
-    >
-      {[0, 1, 2].map((i) => (
-        <Glyph
-          key={i}
-          size={12}
-          className={cn(
-            // leaves share the filter bar's ~10°-past-12:00 lean; sprouts
-            // stay upright (they're plants, not leaves).
-            kind === "leaf" && "rotate-[10deg]",
-            i < lit ? "text-fg/70" : "text-muted/25",
-          )}
-        />
-      ))}
-    </span>
-  );
+// Sample-state of a scope as a simple status dot, reusing the suite's three
+// colour values: not sampled (muted) · sampled (ok green) · sampled + published
+// (mauve). Replaces the old colour-coded leaf on the scope sample buttons.
+function scopeStatus(
+  tracks: ScanRow[],
+  hasSample: (r: ScanRow) => boolean,
+  isPublished: (r: ScanRow) => boolean,
+): { sampled: number; published: number; dot: string } {
+  const sampled = tracks.filter(hasSample).length;
+  const published = tracks.filter(isPublished).length;
+  const dot =
+    published > 0 ? "bg-mauve" : sampled > 0 ? "bg-ok" : "bg-muted/40";
+  return { sampled, published, dot };
 }
 
 interface LibraryTreeProps {
@@ -150,6 +118,11 @@ interface LibraryTreeProps {
    * purple when partial) on artist/album rows that already have clips.
    */
   hasSample: (row: ScanRow) => boolean;
+  /**
+   * Returns true if the row's clip has been published to Nostr (tracked
+   * locally — recorded when you publish from the Sample panel).
+   */
+  isPublished: (row: ScanRow) => boolean;
   /**
    * Source-signature of the row whose clip is currently playing (or
    * null when nothing's playing). Drives the Play/Pause icon swap on
@@ -173,6 +146,7 @@ export function LibraryTree({
   onOpenStatus,
   onSampleScope,
   hasSample,
+  isPublished,
   playingSig,
   onPlaySample,
   signatureOf,
@@ -269,25 +243,17 @@ export function LibraryTree({
         {artists.map((artist) => {
           const isOpen = openArtists.has(artist.name);
           const allArtistTracks = artist.albums.flatMap((a) => a.tracks);
-          const sampledHere = allArtistTracks.filter(hasSample).length;
-          const sampleState =
-            sampledHere === 0
-              ? "none"
-              : sampledHere === allArtistTracks.length
-                ? "all"
-                : "partial";
-          const leafClass =
-            sampleState === "all"
-              ? "text-ok"
-              : sampleState === "partial"
-                ? "text-mauve"
-                : "text-muted";
-          const leafTitle =
-            sampleState === "all"
-              ? `All ${allArtistTracks.length} tracks already sampled · click to re-sample`
-              : sampleState === "partial"
+          const {
+            sampled: sampledHere,
+            published: publishedHere,
+            dot: artistDot,
+          } = scopeStatus(allArtistTracks, hasSample, isPublished);
+          const artistDotTitle =
+            publishedHere > 0
+              ? `${publishedHere} of ${allArtistTracks.length} tracks published · click to (re)sample`
+              : sampledHere > 0
                 ? `${sampledHere} of ${allArtistTracks.length} tracks sampled · click to sample the rest`
-                : `Sample ${artist.totalTracks} tracks across ${artist.albums.length} albums — 10s each`;
+                : `Sample ${artist.totalTracks} tracks across ${artist.albums.length} releases — 10s each`;
           return (
             <div key={artist.name}>
               <div className="w-full flex items-center pr-2 py-1.5 hover:bg-surface/30">
@@ -298,50 +264,39 @@ export function LibraryTree({
                 >
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span className="flex-1 truncate">{artist.name}</span>
-                  {/* Releases as a sprout meter — the artist aggregate stays a
-                      magnitude gauge. Track counts (leaf-dots) live at the
-                      release level below, per the suite's release-level model. */}
+                  {/* Releases as a dot-leaved tree — one leaf-green dot per
+                      release crowning a shared stem. Same dot unit as the
+                      release-level leaf-dots, so the artist row reads as a
+                      "tree" of its releases. */}
                   <span className="flex items-center gap-2 shrink-0">
-                    <Meter
-                      n={artist.albums.length}
-                      kind="plant"
-                      title={`${artist.albums.length} release${artist.albums.length === 1 ? "" : "s"}`}
-                    />
+                    <ReleaseTree n={artist.albums.length} />
                   </span>
                 </button>
                 <button
                   onClick={() => onSampleScope(artist.name, allArtistTracks)}
-                  title={leafTitle}
-                  className={cn(
-                    "ml-2 px-2 py-1 rounded hover:text-accent hover:bg-surface/40 shrink-0",
-                    leafClass,
-                  )}
+                  title={artistDotTitle}
+                  className="ml-2 p-1.5 rounded hover:bg-surface/40 shrink-0
+                             flex items-center justify-center"
                   aria-label={`Sample all tracks by ${artist.name}`}
                 >
-                  <LeafIcon size={14} className="rotate-[10deg]" />
+                  <span
+                    className={cn("w-2.5 h-2.5 rounded-full transition-colors", artistDot)}
+                  />
                 </button>
               </div>
               {isOpen &&
                 artist.albums.map((album) => {
                   const key = `${artist.name}//${album.name}`;
                   const alOpen = openAlbums.has(key);
-                  const alSampled = album.tracks.filter(hasSample).length;
-                  const alState =
-                    alSampled === 0
-                      ? "none"
-                      : alSampled === album.tracks.length
-                        ? "all"
-                        : "partial";
-                  const alLeafClass =
-                    alState === "all"
-                      ? "text-ok"
-                      : alState === "partial"
-                        ? "text-mauve"
-                        : "text-muted";
-                  const alLeafTitle =
-                    alState === "all"
-                      ? `All ${album.tracks.length} tracks already sampled · click to re-sample`
-                      : alState === "partial"
+                  const {
+                    sampled: alSampled,
+                    published: alPublished,
+                    dot: alDot,
+                  } = scopeStatus(album.tracks, hasSample, isPublished);
+                  const alDotTitle =
+                    alPublished > 0
+                      ? `${alPublished} of ${album.tracks.length} tracks published · click to (re)sample`
+                      : alSampled > 0
                         ? `${alSampled} of ${album.tracks.length} tracks sampled · click to sample the rest`
                         : `Sample ${album.tracks.length} tracks from this release — 10s each`;
                   return (
@@ -357,19 +312,19 @@ export function LibraryTree({
                           {/* leaf-dots = tracks on this release (branch) —
                               one muted-green dot per track, stacked. */}
                           <span className="flex items-center justify-end shrink-0">
-                            <LeafDots n={album.tracks.length} />
+                            <LeafDots n={album.tracks.length} maxCols={8} />
                           </span>
                         </button>
                         <button
                           onClick={() => onSampleScope(`${artist.name} / ${album.name}`, album.tracks)}
-                          title={alLeafTitle}
-                          className={cn(
-                            "ml-2 px-2 py-1 rounded hover:text-accent hover:bg-surface/40 shrink-0",
-                            alLeafClass,
-                          )}
+                          title={alDotTitle}
+                          className="ml-2 p-1.5 rounded hover:bg-surface/40 shrink-0
+                                     flex items-center justify-center"
                           aria-label={`Sample release ${album.name}`}
                         >
-                          <LeafIcon size={14} className="rotate-[10deg]" />
+                          <span
+                            className={cn("w-2.5 h-2.5 rounded-full transition-colors", alDot)}
+                          />
                         </button>
                       </div>
                       {alOpen &&
