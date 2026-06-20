@@ -264,10 +264,10 @@ export function LibraryTree({
                 >
                   {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   <span className="flex-1 truncate">{artist.name}</span>
-                  {/* Releases as a dot-leaved tree — one leaf-green dot per
-                      release crowning a shared stem. Same dot unit as the
-                      release-level leaf-dots, so the artist row reads as a
-                      "tree" of its releases. */}
+                  {/* Release count — a leaf-green numbered circle (suite
+                      CountBadge): "how many releases under this artist", the
+                      same glyph ndisc uses for a release's disc count. The
+                      square tile / dots stay reserved for tracks. */}
                   <span className="flex items-center gap-2 shrink-0">
                     <ReleaseTree n={artist.albums.length} />
                   </span>
@@ -312,7 +312,11 @@ export function LibraryTree({
                           {/* leaf-dots = tracks on this release (branch) —
                               one muted-green dot per track, stacked. */}
                           <span className="flex items-center justify-end shrink-0">
-                            <LeafDots n={album.tracks.length} maxCols={8} />
+                            <LeafDots
+                              n={album.tracks.length}
+                              maxCols={8}
+                              maxRows={4}
+                            />
                           </span>
                         </button>
                         <button

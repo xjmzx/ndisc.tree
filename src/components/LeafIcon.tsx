@@ -55,6 +55,7 @@ export function LeafDots({
   max = 99,
   unit = "track",
   maxCols = 5,
+  maxRows,
   className,
 }: {
   /** Present count (solid green dots). */
@@ -65,6 +66,9 @@ export function LeafDots({
   unit?: string;
   /** Max dots per row — lower = taller/narrower, higher = shorter/wider. */
   maxCols?: number;
+  /** When set, the grid is capped at this many rows; a larger count collapses
+   *  to a solid leaf-green tile with the total centred (matches ndisc). */
+  maxRows?: number;
   className?: string;
 }) {
   const present = Math.min(Math.max(n ?? 0, 0), max);
@@ -79,6 +83,22 @@ export function LeafDots({
           missing > 0 ? ` · ${missing} missing` : " · complete"
         }`
       : `${present}${present >= max ? "+" : ""} ${unit}${present === 1 ? "" : "s"}`;
+
+  // Past the row cap, collapse the grid to one solid leaf-green tile carrying
+  // the total, centred (same as ndisc's large-count treatment).
+  if (maxRows != null && Math.ceil(shown / cols) > maxRows) {
+    return (
+      <CountBadge
+        value={shown}
+        atMax={shown >= max}
+        title={title}
+        className={className}
+        shapeClassName="rounded-[3px]"
+        colorClassName="bg-ok/70 text-bg"
+      />
+    );
+  }
+
   return (
     <span
       className={cn("inline-grid gap-[2px] w-max", className)}
@@ -100,10 +120,54 @@ export function LeafDots({
 }
 
 /**
- * Release-tree — the artist-level counterpart to LeafDots, using the same dot
- * unit so ndisc.tree reads as one visual language. An artist's releases are a
- * canopy of tiny leaf-green dots (one per release) on a shared auburn stem: a
- * little dot-leaved tree. Centred canopy, wrap at ~5, capped at `max`.
+ * A count rendered as a number centred on a single solid fixed-size shape —
+ * the suite's "one mark for a quantity" glyph (shared with ndisc). Flavour via
+ * className props: tracks collapse onto a leaf-green rounded tile; the release
+ * count is a leaf-green circle. Shape encodes role (square tile = tracks, circle
+ * = child-count), green throughout.
+ */
+export function CountBadge({
+  value,
+  atMax = false,
+  title,
+  shapeClassName = "rounded-full",
+  colorClassName,
+  size = 21,
+  className,
+}: {
+  value: number;
+  atMax?: boolean;
+  title: string;
+  shapeClassName?: string;
+  colorClassName?: string;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-grid place-items-center font-bold leading-none tabular-nums",
+        shapeClassName,
+        colorClassName,
+        className,
+      )}
+      style={{ width: size, height: size, fontSize: value >= 100 ? 8 : 10 }}
+      title={title}
+      aria-label={title}
+    >
+      {value}
+      {atMax ? "+" : ""}
+    </span>
+  );
+}
+
+/**
+ * Release count — the artist-level counterpart to LeafDots, now in the shared
+ * suite language: a leaf-green numbered circle (the same CountBadge glyph
+ * ndisc uses for its per-release disc count). The circle = "count of this
+ * node's children" (releases here, discs in ndisc); the square tile / dots =
+ * tracks. Shape encodes the role, green throughout — so tree and ndisc read as
+ * one visual language. (The dot-tree motif lives on in DotTree/DotForest.)
  */
 export function ReleaseTree({
   n,
@@ -119,20 +183,14 @@ export function ReleaseTree({
   if (count <= 0) return null;
   const title = `${raw}${raw >= max ? "+" : ""} release${raw === 1 ? "" : "s"}`;
   return (
-    <span
-      className={cn("inline-flex flex-col items-center gap-px", className)}
+    <CountBadge
+      value={count}
+      atMax={raw >= max}
       title={title}
-      aria-label={title}
-    >
-      {/* canopy — one dot per release, centred so it crowns the stem */}
-      <span className="flex flex-wrap justify-center gap-[2px] w-8">
-        {Array.from({ length: count }, (_, i) => (
-          <span key={i} className="w-1 h-1 rounded-full bg-ok/70" />
-        ))}
-      </span>
-      {/* shared stem (trunk) */}
-      <span className="w-0.5 h-1.5 rounded-sm bg-auburn/70" />
-    </span>
+      shapeClassName="rounded-full"
+      colorClassName="bg-ok/70 text-bg"
+      className={className}
+    />
   );
 }
 
