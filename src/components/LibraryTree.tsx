@@ -275,8 +275,9 @@ export function LibraryTree({
                 <button
                   onClick={() => onSampleScope(artist.name, allArtistTracks)}
                   title={artistDotTitle}
-                  className="ml-2 p-1.5 rounded hover:bg-surface/40 shrink-0
-                             flex items-center justify-center"
+                  className="ml-2 shrink-0 inline-flex items-center justify-center
+                             h-5 px-1.5 rounded bg-mauve/20 hover:bg-mauve/30
+                             transition-colors"
                   aria-label={`Sample all tracks by ${artist.name}`}
                 >
                   <span
@@ -322,8 +323,9 @@ export function LibraryTree({
                         <button
                           onClick={() => onSampleScope(`${artist.name} / ${album.name}`, album.tracks)}
                           title={alDotTitle}
-                          className="ml-2 p-1.5 rounded hover:bg-surface/40 shrink-0
-                                     flex items-center justify-center"
+                          className="ml-2 shrink-0 inline-flex items-center justify-center
+                                     h-5 px-1.5 rounded bg-mauve/20 hover:bg-mauve/30
+                                     transition-colors"
                           aria-label={`Sample release ${album.name}`}
                         >
                           <span
