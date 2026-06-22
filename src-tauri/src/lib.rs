@@ -39,6 +39,13 @@ const AUDIO_EXTS: &[&str] = &[
     "flac", "mp3", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif",
     "ape", "wv", "tak", "alac", "mp2", "wma",
 ];
+// Video (audio-visual) extensions — the same set ndisc recognises, so the
+// suite shares one definition of "carries video". The scanner lists these so
+// the library is aware of the full media spectrum, but never analyses them
+// (no ffprobe/spectral pass): classify short-circuits a video row.
+const VIDEO_EXTS: &[&str] = &[
+    "mp4", "mkv", "mov", "webm", "m4v", "avi", "wmv", "flv", "mpg", "mpeg", "ogv",
+];
 // Wall-clock caps per child process. ffmpeg with ANALYSIS_SECS=30 normally
 // finishes in 1–5s on modern hardware; 60s leaves >10× headroom so legitimate
 // scans never trip the cap. ffprobe is metadata-only and should be near
@@ -303,6 +310,19 @@ fn codec_category(codec: &str) -> Option<Verdict> {
 
 fn classify(path: &Path, vol_re: &Regex) -> ScanRow {
     let path_str = path.to_string_lossy().into_owned();
+    // Video files are recognised but never analysed — short-circuit before any
+    // ffprobe/ffmpeg work. The row is marked with info "video" and verdict
+    // Unknown (no quality state); the UI keys off the file extension to render
+    // a Film marker and to exclude it from the audio-quality tallies.
+    if has_video_ext(path) {
+        return ScanRow {
+            verdict: Verdict::Unknown,
+            path: path_str,
+            peak: None,
+            sr: None,
+            info: "video".into(),
+        };
+    }
     let (codec, sr) = match ffprobe_fields(path) {
         FfprobeOutcome::Ok { codec, sr } => (codec, sr),
         FfprobeOutcome::TimedOut => {
@@ -437,6 +457,17 @@ fn has_audio_ext(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// True if the path's extension matches one of [`VIDEO_EXTS`]. Case-insensitive.
+fn has_video_ext(p: &Path) -> bool {
+    p.extension()
+        .and_then(|x| x.to_str())
+        .map(|x| {
+            let lower = x.to_ascii_lowercase();
+            VIDEO_EXTS.contains(&lower.as_str())
+        })
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 async fn count_audio_files(root: String) -> Result<AudioCount, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -447,7 +478,8 @@ async fn count_audio_files(root: String) -> Result<AudioCount, String> {
         let mut file_count = 0usize;
         let mut total_bytes = 0u64;
         for entry in WalkDir::new(&root_pb).into_iter().filter_map(|e| e.ok()) {
-            if !entry.file_type().is_file() || !has_audio_ext(entry.path()) {
+            let p = entry.path();
+            if !entry.file_type().is_file() || !(has_audio_ext(p) || has_video_ext(p)) {
                 continue;
             }
             file_count += 1;
@@ -651,13 +683,16 @@ fn scan_inner(
     let files: Vec<PathBuf> = WalkDir::new(&root_pb)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file() && has_audio_ext(e.path()))
+        .filter(|e| {
+            e.file_type().is_file()
+                && (has_audio_ext(e.path()) || has_video_ext(e.path()))
+        })
         .map(|e| e.path().to_path_buf())
         .collect();
 
     let total = files.len();
     if total == 0 {
-        return Err(format!("no audio files under {root}"));
+        return Err(format!("no audio/video files under {root}"));
     }
 
     let worker_count = workers

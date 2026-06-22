@@ -472,9 +472,22 @@ export default function App() {
       LOSSY: 0,
       UNKNOWN: 0,
     };
-    if (report) for (const r of report.rows) c[r.verdict]++;
+    // Video files carry no quality verdict (info "video") — exclude them so
+    // the verdict bar / stats stay an honest audio-quality picture.
+    if (report)
+      for (const r of report.rows) {
+        if (r.info === "video") continue;
+        c[r.verdict]++;
+      }
     return c;
   }, [report]);
+
+  // Audio-visual files in the current scan — shown in the tree, counted apart
+  // from the audio-quality verdicts.
+  const videoCount = useMemo(
+    () => (report?.rows ?? []).filter((r) => r.info === "video").length,
+    [report],
+  );
 
   const anyFilter =
     filter.verdict !== "All" ||
@@ -501,14 +514,14 @@ export default function App() {
     const total = {
       artists: new Set(allPairs.map((p) => p.artist)).size,
       releases: allPairs.length,
-      tracks: all.length,
+      tracks: all.filter((r) => r.info !== "video").length,
     };
     if (!anyFilter) return { ...total, filtered: false as const, total };
     const fPairs = uniquePairs(filteredRows, libRoot);
     return {
       artists: new Set(fPairs.map((p) => p.artist)).size,
       releases: fPairs.length,
-      tracks: filteredRows.length,
+      tracks: filteredRows.filter((r) => r.info !== "video").length,
       filtered: true as const,
       total,
     };
@@ -577,7 +590,9 @@ export default function App() {
         {report && (
           <div className="hidden md:flex flex-col items-center gap-1.5 min-w-[520px] mt-1">
             {(() => {
-              const total = Math.max(1, report.rows.length);
+              // Denominator excludes video so the audio-verdict segments fill
+              // the bar correctly (counts already exclude video).
+              const total = Math.max(1, report.rows.length - videoCount);
               const seg = (n: number) => (100 * n) / total;
               return (
                 <div className="w-full h-1.5 rounded-sm overflow-hidden bg-bg/60 flex">
@@ -768,6 +783,8 @@ export default function App() {
                       {libraryStats.artists.toLocaleString()} artists ·{" "}
                       {libraryStats.releases.toLocaleString()} releases ·{" "}
                       {libraryStats.tracks.toLocaleString()} tracks
+                      {videoCount > 0 &&
+                        ` · ${videoCount.toLocaleString()} video`}
                     </>
                   )}
                 </span>

@@ -4,6 +4,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  Film,
   Pause,
   Play,
 } from "lucide-react";
@@ -26,9 +27,15 @@ interface TrackRow extends ScanRow {
   _track: string;
 }
 
+// A video (audio-visual) file isn't analysed — the backend marks it with
+// info "video". Kept out of `tracks` so all audio logic (verdict tallies,
+// sampling, leaf-dots) is untouched; surfaced as a parallel display-only list.
+const isVideoRow = (r: ScanRow): boolean => r.info === "video";
+
 interface Album {
   name: string;
-  tracks: TrackRow[];
+  tracks: TrackRow[]; // audio only
+  videos: TrackRow[]; // audio-visual files — display only, never analysed/sampled
   /** Verdict tally, computed once in group() — avoids re-running countsFor
    *  over the tracks on every render of the (often fully-expanded) tree. */
   verdictCounts: Record<Verdict, number>;
@@ -38,6 +45,7 @@ interface Artist {
   name: string;
   albums: Album[];
   totalTracks: number;
+  videoCount: number;
   verdictCounts: Record<Verdict, number>;
 }
 
@@ -55,18 +63,27 @@ function group(rows: ScanRow[], root: string): Artist[] {
   for (const [name, albumsMap] of byArtist) {
     const albums: Album[] = [];
     let totalTracks = 0;
+    let videoCount = 0;
     const artistCounts = countsFor([]); // zeroed tally to accumulate into
-    for (const [aname, tracks] of albumsMap) {
-      tracks.sort((a, b) => a._track.toLowerCase().localeCompare(b._track.toLowerCase()));
+    for (const [aname, allRows] of albumsMap) {
+      // Split audio (analysed) from video (display-only) so existing
+      // audio logic operates on `tracks` exactly as before.
+      const tracks = allRows.filter((r) => !isVideoRow(r));
+      const videos = allRows.filter(isVideoRow);
+      const cmp = (a: TrackRow, b: TrackRow) =>
+        a._track.toLowerCase().localeCompare(b._track.toLowerCase());
+      tracks.sort(cmp);
+      videos.sort(cmp);
       const verdictCounts = countsFor(tracks);
-      albums.push({ name: aname, tracks, verdictCounts });
+      albums.push({ name: aname, tracks, videos, verdictCounts });
       totalTracks += tracks.length;
+      videoCount += videos.length;
       (Object.keys(verdictCounts) as Verdict[]).forEach((v) => {
         artistCounts[v] += verdictCounts[v];
       });
     }
     albums.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-    out.push({ name, albums, totalTracks, verdictCounts: artistCounts });
+    out.push({ name, albums, totalTracks, videoCount, verdictCounts: artistCounts });
   }
   out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   return out;
@@ -269,6 +286,15 @@ export function LibraryTree({
                       same glyph ndisc uses for a release's disc count. The
                       square tile / dots stay reserved for tracks. */}
                   <span className="flex items-center gap-2 shrink-0">
+                    {artist.videoCount > 0 && (
+                      <span
+                        className="inline-flex items-center gap-0.5 text-mauve"
+                        title={`${artist.videoCount} video file${artist.videoCount === 1 ? "" : "s"}`}
+                      >
+                        <Film size={12} className="shrink-0" />
+                        <span className="text-[10px]">{artist.videoCount}</span>
+                      </span>
+                    )}
                     <ReleaseTree n={artist.albums.length} />
                   </span>
                 </button>
@@ -310,9 +336,20 @@ export function LibraryTree({
                         >
                           {alOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                           <span className="flex-1 truncate">{album.name}</span>
-                          {/* leaf-dots = tracks on this release (branch) —
-                              one muted-green dot per track, stacked. */}
-                          <span className="flex items-center justify-end shrink-0">
+                          {/* leaf-dots = audio tracks on this release (branch);
+                              a Film marker flags any audio-visual files. */}
+                          <span className="flex items-center justify-end gap-1.5 shrink-0">
+                            {album.videos.length > 0 && (
+                              <span
+                                className="inline-flex items-center gap-0.5 text-mauve"
+                                title={`${album.videos.length} video file${album.videos.length === 1 ? "" : "s"}`}
+                              >
+                                <Film size={11} className="shrink-0" />
+                                {album.videos.length > 1 && (
+                                  <span className="text-[10px]">{album.videos.length}</span>
+                                )}
+                              </span>
+                            )}
                             <LeafDots
                               n={album.tracks.length}
                               maxCols={8}
@@ -395,6 +432,29 @@ export function LibraryTree({
                             </div>
                           );
                         })}
+                      {/* Audio-visual files — recognised + shown, never
+                          analysed or sampled. Double-click reveals in folder. */}
+                      {alOpen &&
+                        album.videos.map((v) => (
+                          <div
+                            key={v.path}
+                            onDoubleClick={() => openTrackFolder(v)}
+                            title={`${v.path} · video (not analysed)`}
+                            className={cn(
+                              "grid grid-cols-[16px_1fr_120px_90px_70px] gap-2 items-center",
+                              "pl-12 pr-3 py-0.5 text-xs font-mono",
+                              "hover:bg-surface/40 text-fg/70",
+                            )}
+                          >
+                            <span className="flex items-center justify-center text-mauve">
+                              <Film size={11} />
+                            </span>
+                            <span className="truncate text-fg/80">{v._track}</span>
+                            <span className="text-mauve">video</span>
+                            <span className="text-right text-muted" />
+                            <span className="text-right text-muted" />
+                          </div>
+                        ))}
                     </div>
                   );
                 })}
