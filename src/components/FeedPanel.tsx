@@ -11,7 +11,7 @@ import {
 import { nip19 } from "nostr-tools";
 import { AudioPlayer } from "./AudioPlayer";
 import { Section } from "./Section";
-import { DotForest } from "./LeafIcon";
+import { DotCluster } from "./LeafIcon";
 import { cn } from "../lib/cn";
 import { type Identity, shortNpub } from "../lib/nostr";
 import { useReactions } from "../hooks/useReactions";
@@ -120,9 +120,13 @@ type Status = "idle" | "connecting" | "ready" | "error";
 interface FeedPanelProps {
   relays: string[];
   identity: Identity | null;
+  /** Collapse the whole Radio flank — wired to the "Radio" header click so
+      the gesture matches the Sample flank (header-click ⇄ strip), the shared
+      ndisc.smpl collapse-flank model. */
+  onCollapse?: () => void;
 }
 
-export function FeedPanel({ identity, relays }: FeedPanelProps) {
+export function FeedPanel({ identity, relays, onCollapse }: FeedPanelProps) {
   const RELAY_URL = relays[0] ?? "wss://relay.fizx.uk";
   const [events, setEvents] = useState<NostrEvent[]>([]);
   const [status, setStatus] = useState<Status>("idle");
@@ -263,9 +267,10 @@ export function FeedPanel({ identity, relays }: FeedPanelProps) {
   return (
     <Section
       title="Radio"
-      icon={<DotForest className="mt-0.5" />}
+      icon={<DotCluster className="mt-0.5" />}
       className="flex-1 min-h-0"
       contentClassName="flex-1 min-h-0 flex flex-col gap-2"
+      onTitleClick={onCollapse}
     >
       <div className="flex items-center gap-2 text-xs">
         <span

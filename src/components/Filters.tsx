@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { VERDICTS, type Verdict } from "../lib/tauri";
-import { DotTree } from "./LeafIcon";
 
 export type SampleFilter = "all" | "sampled" | "unsampled";
 
@@ -81,9 +80,9 @@ export function Filters({ filter, setFilter }: FiltersProps) {
         />
       </div>
 
-      {/* Clip-exists filter — one dot-tree toggle cycling the three states:
+      {/* Clip-exists filter — one dot toggle cycling the three states:
           off (grey, all) → has clip (green) → no clip (mauve) → off. A single
-          button reads as a toggle; the tree's canopy colour carries the state. */}
+          button reads as a toggle; the dot's hue carries the state. */}
       {(() => {
         const next: Record<SampleFilter, SampleFilter> = {
           all: "sampled",
@@ -115,7 +114,9 @@ export function Filters({ filter, setFilter }: FiltersProps) {
             className="flex items-center justify-center h-9 w-9 rounded-md
                        bg-surface hover:bg-surfaceHover transition-colors"
           >
-            <DotTree dotClass={s.dot} />
+            <span
+              className={`w-2.5 h-2.5 rounded-full transition-colors ${s.dot}`}
+            />
           </button>
         );
       })()}

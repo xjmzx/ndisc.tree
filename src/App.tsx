@@ -3,13 +3,13 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Check,
-  ChevronRight,
   FolderTree,
   KeyRound,
   LineChart,
   Lock,
   LogOut,
   Radio,
+  Table,
 } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { SimplePool } from "nostr-tools";
@@ -22,9 +22,10 @@ import { OperationOutput, type MirrorState } from "./components/OperationOutput"
 import { SampleDetails } from "./components/SampleDetails";
 import { PublishPanel } from "./components/PublishPanel";
 import { CollapsedStrip } from "./components/CollapsedStrip";
-import { DotForest } from "./components/LeafIcon";
+import { DotCluster } from "./components/LeafIcon";
 import { ToolbarIconButton } from "./components/ToolbarIconButton";
 import { StatsView } from "./components/StatsView";
+import { TableView } from "./components/TableView";
 import { Section } from "./components/Section";
 import { MirrorControls, OrphanStrip } from "./components/MirrorControls";
 import { useMirror } from "./lib/useMirror";
@@ -191,7 +192,7 @@ export default function App() {
   // reclaiming its width for the Library; both collapsed ⇒ full-width Library.
   // (Replaces the old 3-way switcher.) Persisted.
   // Main view — the library work area, or the stats page (ndisc's pattern).
-  const [view, setView] = useState<"library" | "stats">("library");
+  const [view, setView] = useState<"library" | "stats" | "table">("library");
   const [leftCollapsed, setLeftCollapsed] = usePersistedBool(
     "afqc-tauri.leftCollapsed",
     false,
@@ -200,6 +201,18 @@ export default function App() {
     "afqc-tauri.rightCollapsed",
     false,
   );
+  // Main-row columns — a collapsed flank shrinks to a 2.5rem strip and the
+  // Library (centre) absorbs the freed width. Same grid-template handoff
+  // ndisc.smpl uses for its bottom row, so the two audio tools share one
+  // collapse mechanism (the flanks keep their tool-specific fixed widths).
+  const flankCols =
+    leftCollapsed && rightCollapsed
+      ? "grid-cols-[2.5rem_minmax(0,1fr)_2.5rem]"
+      : leftCollapsed
+        ? "grid-cols-[2.5rem_minmax(0,1fr)_340px]"
+        : rightCollapsed
+          ? "grid-cols-[300px_minmax(0,1fr)_2.5rem]"
+          : "grid-cols-[300px_minmax(0,1fr)_340px]";
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Track the current object URL so we can revoke it when playback ends
@@ -633,6 +646,14 @@ export default function App() {
           {/* Stats toggle — borrows ndisc's digital-tone toolbar button. */}
           <ToolbarIconButton
             tone="digital"
+            pressed={view === "table"}
+            title={view === "table" ? "Back to library" : "Flat sortable file table"}
+            onClick={() => setView((v) => (v === "table" ? "library" : "table"))}
+          >
+            <Table size={14} />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            tone="digital"
             pressed={view === "stats"}
             title={view === "stats" ? "Back to library" : "Library quality stats"}
             onClick={() => setView((v) => (v === "stats" ? "library" : "stats"))}
@@ -658,6 +679,8 @@ export default function App() {
 
       {view === "stats" ? (
         <StatsView counts={counts} />
+      ) : view === "table" ? (
+        <TableView report={report} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-4">
         {/* Slim top strip — Source (scan config) and Destination (sample
@@ -716,7 +739,7 @@ export default function App() {
         {/* Main row — [ Sample ][ Library ][ Radio ]. The Library is the
             dominant center surface; each flank collapses to a strip to give it
             more width. Mirrors ndisc.smpl's flanked-Library layout. */}
-        <div className="flex-1 min-h-0 flex gap-4">
+        <div className={`flex-1 min-h-0 grid gap-4 ${flankCols}`}>
           {/* Left flank — Sample details + Publish stacked, collapsing
               together to one strip. */}
           {leftCollapsed ? (
@@ -728,7 +751,7 @@ export default function App() {
               className="border-accent/30"
             />
           ) : (
-            <div className="w-[300px] shrink-0 flex flex-col gap-4 min-h-0">
+            <div className="flex flex-col gap-4 min-h-0">
               <SampleDetails
                 row={selectedRow}
                 libRoot={libRoot}
@@ -766,7 +789,7 @@ export default function App() {
           <Section
             title="Library"
             icon={<FolderTree size={16} />}
-            className="flex-1 min-w-0 min-h-0"
+            className="min-w-0 min-h-0"
             contentClassName="flex-1 min-h-0 flex flex-col gap-3"
             right={
               report ? (
@@ -820,26 +843,19 @@ export default function App() {
           {rightCollapsed ? (
             <CollapsedStrip
               label="Radio"
-              icon={<DotForest />}
+              icon={<DotCluster />}
               side="right"
               onExpand={() => setRightCollapsed(false)}
               className="border-auburn/30"
             />
           ) : (
-            <div className="w-[340px] shrink-0 flex flex-col gap-3 min-h-0">
-              <div className="flex justify-end shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setRightCollapsed(true)}
-                  title="Collapse Radio"
-                  aria-label="Collapse Radio"
-                  className="p-1 rounded text-muted hover:text-fg hover:bg-surface/40"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
+            <div className="flex flex-col gap-3 min-h-0">
               <NostrPanel identity={identity} setIdentity={setIdentity} />
-              <FeedPanel identity={identity} relays={relays} />
+              <FeedPanel
+                identity={identity}
+                relays={relays}
+                onCollapse={() => setRightCollapsed(true)}
+              />
             </div>
           )}
         </div>

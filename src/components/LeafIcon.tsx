@@ -173,7 +173,7 @@ export function CountBadge({
  * ndisc uses for its per-release disc count). The circle = "count of this
  * node's children" (releases here, discs in ndisc); the square tile / dots =
  * tracks. Shape encodes the role, green throughout — so tree and ndisc read as
- * one visual language. (The dot-tree motif lives on in DotTree/DotForest.)
+ * one visual language. (Decorative dot glyphs live on in DotCluster.)
  */
 export function ReleaseTree({
   n,
@@ -201,65 +201,22 @@ export function ReleaseTree({
 }
 
 /**
- * A single small "dot tree" icon — a fixed canopy of dots on a short auburn
- * stem (decorative glyph, not a count; that's ReleaseTree). `dotClass`
- * recolours the canopy so it can double as a state toggle (e.g. the clip
- * filter: muted → green → mauve).
+ * A small scatter of dots in varied hues and sizes — the suite's dot
+ * vocabulary used as a decorative glyph (not a count). It marks "Radio": a
+ * handful of samples out on the wire. The mixed hues (present green / published
+ * mauve / unknown muted) and sizes read as a spread of leaves rather than a
+ * single mark — the dot-cluster successor to the old dot-tree/forest motifs.
  */
-export function DotTree({
-  dotClass = "bg-ok/70",
-  stemClass = "bg-auburn/70",
-  className,
-}: {
-  dotClass?: string;
-  stemClass?: string;
-  className?: string;
-}) {
+export function DotCluster({ className }: { className?: string }) {
   return (
     <span
-      className={cn("inline-flex flex-col items-center gap-px", className)}
+      className={cn("inline-flex items-center gap-[2px]", className)}
       aria-hidden="true"
     >
-      <span className="flex flex-wrap justify-center gap-[2px] w-4">
-        {Array.from({ length: 5 }, (_, i) => (
-          <span
-            key={i}
-            className={cn("w-1 h-1 rounded-full transition-colors", dotClass)}
-          />
-        ))}
-      </span>
-      <span className={cn("w-0.5 h-1.5 rounded-sm", stemClass)} />
-    </span>
-  );
-}
-
-// One tiny tree within the forest glyph — smaller dots than DotTree.
-function ForestTree({ dots }: { dots: number }) {
-  return (
-    <span className="inline-flex flex-col items-center gap-[1px]">
-      <span className="flex flex-wrap justify-center gap-[1px] w-[7px]">
-        {Array.from({ length: dots }, (_, i) => (
-          <span key={i} className="w-[2px] h-[2px] rounded-full bg-ok/70" />
-        ))}
-      </span>
-      <span className="w-px h-1 rounded-sm bg-auburn/70" />
-    </span>
-  );
-}
-
-/**
- * A mini forest — a few tiny dot-trees of varied height, base-aligned. The
- * Radio glyph: published samples out on the wire, as a little stand of trees.
- */
-export function DotForest({ className }: { className?: string }) {
-  return (
-    <span
-      className={cn("inline-flex items-end gap-[2px]", className)}
-      aria-hidden="true"
-    >
-      <ForestTree dots={3} />
-      <ForestTree dots={5} />
-      <ForestTree dots={2} />
+      <span className="w-1 h-1 rounded-full bg-ok/70" />
+      <span className="w-1.5 h-1.5 rounded-full bg-mauve/70" />
+      <span className="w-[3px] h-[3px] rounded-full bg-muted/60" />
+      <span className="w-1 h-1 rounded-full bg-ok/45" />
     </span>
   );
 }
