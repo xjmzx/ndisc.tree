@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "../lib/cn";
 import type { ScanReport, Verdict } from "../lib/tauri";
@@ -16,10 +16,11 @@ const VERDICT_TEXT: Record<Verdict, string> = {
   UNKNOWN: "text-muted",
 };
 
-// Rendered-row cap so a huge library stays responsive without virtualization;
-// the overflow is surfaced in the toolbar (never silently dropped). Sorting
-// happens over the full set first, so the cap shows the top N for the sort.
-const MAX_ROWS = 2000;
+// Row virtualization: only the visible slice (+ overscan) is in the DOM, so
+// the full scan scrolls smoothly with no row cap. ROW_H must match the
+// rendered row height (box-border, so the 1px border is included).
+const ROW_H = 26;
+const OVERSCAN = 8;
 
 interface Flat {
   path: string;
@@ -103,8 +104,33 @@ export function TableView({ report }: { report: ScanReport | null }) {
     return [...flat].sort((a, b) => compare(a, b, sortKey, sortDir, numeric));
   }, [flat, sortKey, sortDir]);
 
-  const shown = sorted.slice(0, MAX_ROWS);
-  const overflow = sorted.length - shown.length;
+  // --- virtualization ---
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => setViewportH(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Reset to the top when the sort or the underlying scan changes.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [sortKey, sortDir, flat]);
+
+  const total = sorted.length;
+  const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
+  const end = Math.min(total, start + Math.ceil(viewportH / ROW_H) + OVERSCAN * 2);
+  const slice = sorted.slice(start, end);
+  const padTop = start * ROW_H;
+  const padBottom = (total - end) * ROW_H;
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -119,12 +145,6 @@ export function TableView({ report }: { report: ScanReport | null }) {
       <div className="flex items-center gap-3 px-4 py-1.5 shrink-0 border-b border-surface/60 text-xs">
         <span className="text-muted">
           {report ? `${flat.length} files` : "no scan"}
-          {overflow > 0 && (
-            <span className="ml-3 text-warn">
-              showing {MAX_ROWS} of {flat.length} (sorted) — refine or filter to
-              narrow
-            </span>
-          )}
         </span>
       </div>
 
@@ -157,19 +177,26 @@ export function TableView({ report }: { report: ScanReport | null }) {
         ))}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]">
+      <div
+        ref={scrollRef}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        className="flex-1 min-h-0 overflow-y-auto [scrollbar-gutter:stable]"
+      >
         {!report ? (
           <div className="px-4 py-6 text-sm text-muted">
             No scan data yet — run a scan.
           </div>
-        ) : shown.length === 0 ? (
+        ) : total === 0 ? (
           <div className="px-4 py-6 text-sm text-muted">no files</div>
         ) : (
-          shown.map((r) => (
+          <>
+            <div style={{ height: padTop }} />
+            {slice.map((r) => (
             <div
               key={r.path}
+              style={{ height: ROW_H }}
               className={cn(
-                "grid items-center gap-3 px-4 py-1 font-mono text-xs",
+                "grid items-center gap-3 px-4 font-mono text-xs",
                 "border-b border-fg/25 hover:bg-surface/30 transition-colors",
                 GRID,
               )}
@@ -209,7 +236,9 @@ export function TableView({ report }: { report: ScanReport | null }) {
                 );
               })}
             </div>
-          ))
+            ))}
+            <div style={{ height: padBottom }} />
+          </>
         )}
       </div>
     </div>
