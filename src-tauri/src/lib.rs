@@ -502,11 +502,11 @@ async fn count_audio_files(root: String) -> Result<AudioCount, String> {
 #[derive(Serialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "camelCase")]
 enum VideoBucket {
-    /// h264 + (aac|mp3|none) in an mp4/m4v with faststart — plays as-is.
+    /// h264 + libav-playable audio in an mp4/m4v with faststart — plays as-is.
     Plays,
     /// h264 + playable audio, but wrong container or moov-at-end → `-c copy +faststart`.
     Remux,
-    /// h264 but non-playable audio → `-c:v copy -c:a aac +faststart`.
+    /// h264 but audio libav can't decode → `-c:v copy -c:a aac +faststart`.
     AudioFix,
     /// Legacy video codec (mpeg/avi/…) → full libx264/aac transcode.
     Transcode,
@@ -536,16 +536,24 @@ fn probe_video(path: &Path) -> Option<VideoProbe> {
             let img = ["mjpeg", "mjpegb", "png", "bmp", "gif"];
             let mut vcodecs: Vec<String> = Vec::new();
             let mut acodec: Option<String> = None;
+            // ffprobe csv emits the two fields in its own internal order
+            // (codec_name,codec_type), NOT the order requested — so identify the
+            // codec_type token wherever it lands rather than assuming position.
+            let is_type =
+                |x: &str| matches!(x, "video" | "audio" | "data" | "subtitle" | "attachment");
             for line in s.lines() {
-                let mut it = line.splitn(2, ',');
-                let kind = it.next().unwrap_or("").trim();
-                let name = it.next().unwrap_or("").trim();
-                if name.is_empty() {
-                    continue;
-                }
-                match kind {
-                    "video" => vcodecs.push(name.to_string()),
-                    "audio" if acodec.is_none() => acodec = Some(name.to_string()),
+                let parts: Vec<&str> = line
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|x| !x.is_empty())
+                    .collect();
+                let kind = parts.iter().copied().find(|x| is_type(x));
+                let name = parts.iter().copied().find(|x| !is_type(x));
+                match (kind, name) {
+                    (Some("video"), Some(n)) => vcodecs.push(n.to_string()),
+                    (Some("audio"), Some(n)) if acodec.is_none() => {
+                        acodec = Some(n.to_string())
+                    }
                     _ => {}
                 }
             }
@@ -615,9 +623,16 @@ fn video_bucket(
         return VideoBucket::Unknown;
     };
     let mp4ish = matches!(ext, "mp4" | "m4v");
+    // Target = plays-in-nplay-locally (WebKit2GTK + gstreamer1.0-libav over the
+    // loopback <video>): the real gate is an mp4/m4v container + h264 video;
+    // audio is permissive because libav decodes far more than web-baseline aac
+    // (ac3 etc. play — confirmed against the user's library).
     let audio_ok = match acodec.as_deref() {
         None => true, // no audio stream — video-only, still fine
-        Some(a) => matches!(a, "aac" | "mp3"),
+        Some(a) => matches!(
+            a,
+            "aac" | "mp3" | "ac3" | "eac3" | "opus" | "vorbis" | "flac" | "mp2"
+        ),
     };
     if v == "h264" {
         if audio_ok {
