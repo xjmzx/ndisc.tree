@@ -723,6 +723,253 @@ async fn classify_videos(root: String) -> Result<Vec<VideoRow>, String> {
     .map_err(|e| e.to_string())?
 }
 
+// ---- normalize videos (Part B: remux / transcode to playable mp4) ---------
+//
+// Writes the user's files. Per bucket: convert the source to a temp mp4, then
+// (only on success) move the ORIGINAL into a parallel backup tree and move the
+// new mp4 into the original's folder. Originals are never deleted — recoverable
+// from the backup tree. Reuses the ffmpeg CLI already required by the scanner.
+
+const NORMALIZE_TIMEOUT_SECS: u64 = 1800; // 30 min cap per file (transcodes)
+
+/// Sibling of the scan/sample cancel flags for the normalize op.
+struct NormalizeCancel(Arc<AtomicBool>);
+impl NormalizeCancel {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NormalizeItem {
+    path: String,
+    /// "remux" | "audioFix" | "transcode" (from the census).
+    bucket: String,
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq)]
+enum NormalizeOutcome {
+    Converted,
+    Skipped,
+    Failed,
+    TimedOut,
+    Cancelled,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NormalizeProgress {
+    done: usize,
+    total: usize,
+    path: String,
+    bucket: String,
+    outcome: NormalizeOutcome,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NormalizeReport {
+    total: usize,
+    converted: usize,
+    skipped: usize,
+    failed: usize,
+    timed_out: usize,
+    cancelled: usize,
+    errors: Vec<String>,
+}
+
+/// Move a file, falling back to copy+remove across filesystems.
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs::copy(from, to)?;
+            fs::remove_file(from)?;
+            Ok(())
+        }
+    }
+}
+
+fn ffmpeg_args_for(bucket: &str) -> Option<&'static [&'static str]> {
+    // `0:V:0` selects the first non-attached-pic video stream (skips cover art);
+    // `0:a:0?` the first audio if present. +faststart for HTTP-streamed playback.
+    match bucket {
+        "remux" => Some(&[
+            "-map", "0:V:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart",
+        ]),
+        "audioFix" => Some(&[
+            "-map", "0:V:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+        ]),
+        "transcode" => Some(&[
+            "-map", "0:V:0", "-map", "0:a:0?", "-c:v", "libx264", "-crf", "18", "-preset",
+            "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags",
+            "+faststart",
+        ]),
+        _ => None,
+    }
+}
+
+fn normalize_one(item: &NormalizeItem, root: &Path, backup_root: &Path) -> NormalizeOutcome {
+    let src = Path::new(&item.path);
+    if !src.is_file() {
+        return NormalizeOutcome::Failed;
+    }
+    let Some(args) = ffmpeg_args_for(&item.bucket) else {
+        return NormalizeOutcome::Skipped; // plays / unknown — shouldn't be sent
+    };
+    let (Some(dir), Some(stem)) = (src.parent(), src.file_stem().and_then(|s| s.to_str()))
+    else {
+        return NormalizeOutcome::Failed;
+    };
+    let out = dir.join(format!("{stem}.mp4"));
+    // Don't clobber an unrelated existing stem.mp4 (when converting e.g. a .mpg
+    // and a .mp4 of the same name already sits beside it).
+    if out.exists() && out != src {
+        return NormalizeOutcome::Failed;
+    }
+
+    let tmp = dir.join(format!(".ndisc-normalize-{stem}.mp4"));
+    let _ = fs::remove_file(&tmp);
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-nostdin").arg("-i").arg(src);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.arg("-y").arg(&tmp);
+
+    match run_with_timeout(cmd, Duration::from_secs(NORMALIZE_TIMEOUT_SECS)) {
+        RunOutcome::Ok(o) if o.status.success() => {
+            // Back up the original (preserving its relpath under the library),
+            // then move the new mp4 into its place.
+            let rel = src.strip_prefix(root).unwrap_or(src);
+            let backup_dest = backup_root.join(rel);
+            if let Some(p) = backup_dest.parent() {
+                if fs::create_dir_all(p).is_err() {
+                    let _ = fs::remove_file(&tmp);
+                    return NormalizeOutcome::Failed;
+                }
+            }
+            if move_file(src, &backup_dest).is_err() {
+                let _ = fs::remove_file(&tmp);
+                return NormalizeOutcome::Failed;
+            }
+            if move_file(&tmp, &out).is_err() {
+                // Restore the original so we never lose the file.
+                let _ = move_file(&backup_dest, src);
+                let _ = fs::remove_file(&tmp);
+                return NormalizeOutcome::Failed;
+            }
+            NormalizeOutcome::Converted
+        }
+        RunOutcome::Ok(_) => {
+            let _ = fs::remove_file(&tmp);
+            NormalizeOutcome::Failed
+        }
+        RunOutcome::TimedOut => {
+            let _ = fs::remove_file(&tmp);
+            NormalizeOutcome::TimedOut
+        }
+        RunOutcome::Failed => {
+            let _ = fs::remove_file(&tmp);
+            NormalizeOutcome::Failed
+        }
+    }
+}
+
+#[tauri::command]
+async fn normalize_videos(
+    items: Vec<NormalizeItem>,
+    root: String,
+    backup_root: String,
+    app: AppHandle,
+    cancel: tauri::State<'_, NormalizeCancel>,
+) -> Result<NormalizeReport, String> {
+    let root_pb = PathBuf::from(&root);
+    let backup_pb = PathBuf::from(&backup_root);
+    if backup_root.trim().is_empty() {
+        return Err("choose a backup folder for the originals".into());
+    }
+    if !root_pb.is_dir() {
+        return Err(format!("library root not found: {root}"));
+    }
+    if backup_pb == root_pb || backup_pb.starts_with(&root_pb) || root_pb.starts_with(&backup_pb) {
+        return Err("the backup folder must be outside the library root".into());
+    }
+    let flag = cancel.0.clone();
+    flag.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        normalize_inner(items, root_pb, backup_pb, app, flag)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cancel_normalize(cancel: tauri::State<NormalizeCancel>) {
+    cancel.0.store(true, Ordering::Relaxed);
+}
+
+fn normalize_inner(
+    items: Vec<NormalizeItem>,
+    root: PathBuf,
+    backup_root: PathBuf,
+    app: AppHandle,
+    cancel: Arc<AtomicBool>,
+) -> Result<NormalizeReport, String> {
+    let total = items.len();
+    if total == 0 {
+        return Err("no videos to normalize".into());
+    }
+    let mut report = NormalizeReport {
+        total,
+        converted: 0,
+        skipped: 0,
+        failed: 0,
+        timed_out: 0,
+        cancelled: 0,
+        errors: Vec::new(),
+    };
+    // Sequential: transcodes are CPU-heavy and libx264 already multi-threads,
+    // so one ffmpeg at a time avoids thrashing and keeps progress legible.
+    for (i, item) in items.iter().enumerate() {
+        let outcome = if cancel.load(Ordering::Relaxed) {
+            NormalizeOutcome::Cancelled
+        } else {
+            normalize_one(item, &root, &backup_root)
+        };
+        match outcome {
+            NormalizeOutcome::Converted => report.converted += 1,
+            NormalizeOutcome::Skipped => report.skipped += 1,
+            NormalizeOutcome::Cancelled => report.cancelled += 1,
+            NormalizeOutcome::Failed => {
+                report.failed += 1;
+                if report.errors.len() < ERROR_SAMPLE {
+                    report.errors.push(item.path.clone());
+                }
+            }
+            NormalizeOutcome::TimedOut => {
+                report.timed_out += 1;
+                if report.errors.len() < ERROR_SAMPLE {
+                    report.errors.push(format!("{} (timed out)", item.path));
+                }
+            }
+        }
+        let _ = app.emit(
+            "normalize-progress",
+            NormalizeProgress {
+                done: i + 1,
+                total,
+                path: item.path.clone(),
+                bucket: item.bucket.clone(),
+                outcome,
+            },
+        );
+    }
+    Ok(report)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MirrorPair {
@@ -1676,6 +1923,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(ScanCancel::new())
         .manage(SampleCancel::new())
+        .manage(NormalizeCancel::new())
         .invoke_handler(tauri::generate_handler![
             scan_library,
             cancel_scan,
@@ -1690,6 +1938,8 @@ pub fn run() {
             publish_file_metadata,
             count_audio_files,
             classify_videos,
+            normalize_videos,
+            cancel_normalize,
             create_mirror_tree,
             load_report,
             save_report,

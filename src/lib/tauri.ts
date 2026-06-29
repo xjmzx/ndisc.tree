@@ -84,6 +84,58 @@ export async function classifyVideos(root: string): Promise<VideoRow[]> {
   return invoke<VideoRow[]>("classify_videos", { root });
 }
 
+// --- normalize videos (Part B: remux / transcode to playable mp4) ---
+
+export interface NormalizeItem {
+  path: string;
+  bucket: VideoBucket; // remux | audioFix | transcode
+}
+
+export type NormalizeOutcome =
+  | "Converted"
+  | "Skipped"
+  | "Failed"
+  | "TimedOut"
+  | "Cancelled";
+
+export interface NormalizeProgress {
+  done: number;
+  total: number;
+  path: string;
+  bucket: string;
+  outcome: NormalizeOutcome;
+}
+
+export interface NormalizeReport {
+  total: number;
+  converted: number;
+  skipped: number;
+  failed: number;
+  timedOut: number;
+  cancelled: number;
+  errors: string[];
+}
+
+/** Convert each item to a playable mp4 in place; the original is moved to a
+ *  parallel backup tree (never deleted). Writes files. */
+export async function normalizeVideos(
+  items: NormalizeItem[],
+  root: string,
+  backupRoot: string,
+): Promise<NormalizeReport> {
+  return invoke<NormalizeReport>("normalize_videos", { items, root, backupRoot });
+}
+
+export async function cancelNormalize(): Promise<void> {
+  return invoke("cancel_normalize");
+}
+
+export function onNormalizeProgress(
+  cb: (p: NormalizeProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<NormalizeProgress>("normalize-progress", (e) => cb(e.payload));
+}
+
 export async function countAudioFiles(root: string): Promise<AudioCount> {
   return invoke<AudioCount>("count_audio_files", { root });
 }

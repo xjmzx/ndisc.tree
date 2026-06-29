@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, Loader2, RefreshCw, Wand2 } from "lucide-react";
 import { cn } from "../lib/cn";
-import { classifyVideos, type VideoBucket, type VideoRow } from "../lib/tauri";
+import {
+  cancelNormalize,
+  classifyVideos,
+  normalizeVideos,
+  onNormalizeProgress,
+  type NormalizeProgress,
+  type NormalizeReport,
+  type VideoBucket,
+  type VideoRow,
+} from "../lib/tauri";
+
+const BACKUP_KEY = "afqc-tauri.video.backup";
 
 // Part A of the Normalize-videos plan: a read-only census of the library's
 // video files, bucketed by what they'd need to become playable mp4 (h264/aac
@@ -84,9 +96,67 @@ export function VideoCensus({ root }: { root: string }) {
     return c;
   }, [rows]);
 
-  const needsWork = rows
-    ? rows.length - counts.plays
-    : 0;
+  const needsWork = rows ? rows.length - counts.plays : 0;
+
+  // --- normalize (Part B) ---
+  const [backupRoot, setBackupRoot] = useState(
+    () => localStorage.getItem(BACKUP_KEY) ?? "",
+  );
+  useEffect(() => {
+    localStorage.setItem(BACKUP_KEY, backupRoot);
+  }, [backupRoot]);
+
+  const [phase, setPhase] = useState<"idle" | "confirm" | "running" | "done">(
+    "idle",
+  );
+  const [progress, setProgress] = useState<NormalizeProgress | null>(null);
+  const [report, setReport] = useState<NormalizeReport | null>(null);
+
+  // The files that need work — everything but plays-as-is / unknown.
+  const workItems = useMemo(
+    () =>
+      (rows ?? [])
+        .filter(
+          (r) =>
+            r.bucket === "remux" ||
+            r.bucket === "audioFix" ||
+            r.bucket === "transcode",
+        )
+        .map((r) => ({ path: r.path, bucket: r.bucket })),
+    [rows],
+  );
+
+  useEffect(() => {
+    const un = onNormalizeProgress(setProgress);
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  async function pickBackup() {
+    const picked = await openDialog({
+      directory: true,
+      defaultPath: backupRoot || undefined,
+    });
+    if (typeof picked === "string" && picked) setBackupRoot(picked);
+  }
+
+  async function runNormalize() {
+    setPhase("running");
+    setReport(null);
+    setProgress(null);
+    try {
+      const rep = await normalizeVideos(workItems, root, backupRoot);
+      setReport(rep);
+      setPhase("done");
+      load(); // re-probe so converted files re-bucket as "plays"
+    } catch (e) {
+      setError(String(e));
+      setPhase("idle");
+    }
+  }
+
+  const basename = (p: string) => p.split("/").pop() ?? p;
 
   return (
     <div className="rounded-xl bg-panel border border-surface/60 shadow-md flex flex-col min-h-0 h-full overflow-hidden">
@@ -188,6 +258,105 @@ export function VideoCensus({ root }: { root: string }) {
               </div>
             );
           })
+        )}
+      </div>
+
+      {/* Normalize footer — Part B action / confirm / progress / result. */}
+      <div className="shrink-0 border-t border-surface/60 px-4 py-2 text-xs flex items-center gap-3">
+        {phase === "running" ? (
+          <>
+            <Loader2 size={13} className="animate-spin text-digital shrink-0" />
+            <span className="text-fg/80 truncate min-w-0">
+              {progress
+                ? `${progress.done}/${progress.total} · ${basename(progress.path)}`
+                : "starting…"}
+            </span>
+            <button
+              type="button"
+              onClick={() => cancelNormalize()}
+              className="ml-auto px-2 py-1 rounded text-muted hover:text-alert shrink-0"
+            >
+              Cancel
+            </button>
+          </>
+        ) : phase === "confirm" ? (
+          <>
+            <span className="text-fg/80 truncate min-w-0">
+              Normalize {workItems.length} videos → mp4. Originals moved to{" "}
+              <span className="text-mauve">{backupRoot}</span>.
+            </span>
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setPhase("idle")}
+                className="px-2 py-1 rounded text-muted hover:text-fg"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={runNormalize}
+                className="px-2.5 py-1 rounded-md bg-digital/20 text-digital hover:bg-digital/30"
+              >
+                Run
+              </button>
+            </div>
+          </>
+        ) : phase === "done" && report ? (
+          <>
+            <span className="text-fg/80">
+              <span className="text-ok">✓ {report.converted} converted</span>
+              {report.failed > 0 && (
+                <span className="text-alert"> · {report.failed} failed</span>
+              )}
+              {report.timedOut > 0 && (
+                <span className="text-alert"> · {report.timedOut} timed out</span>
+              )}
+              {report.cancelled > 0 && (
+                <span className="text-muted"> · {report.cancelled} cancelled</span>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setPhase("idle");
+                setReport(null);
+              }}
+              className="ml-auto px-2 py-1 rounded text-muted hover:text-fg shrink-0"
+            >
+              Dismiss
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="text-muted shrink-0">Backup originals to:</span>
+            <button
+              type="button"
+              onClick={pickBackup}
+              title="Choose where originals are moved (outside the library root)"
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-surface/60 hover:bg-surface text-fg/80 min-w-0"
+            >
+              <FolderOpen size={12} className="shrink-0" />
+              <span className="truncate max-w-[300px]">
+                {backupRoot || "choose a folder…"}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPhase("confirm")}
+              disabled={workItems.length === 0 || !backupRoot}
+              title={
+                workItems.length === 0
+                  ? "Nothing to normalize"
+                  : !backupRoot
+                    ? "Choose a backup folder first"
+                    : `Convert ${workItems.length} videos to playable mp4`
+              }
+              className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-digital/20 text-digital hover:bg-digital/30 disabled:opacity-40 transition-colors shrink-0"
+            >
+              <Wand2 size={12} /> Normalize {workItems.length}
+            </button>
+          </>
         )}
       </div>
     </div>
