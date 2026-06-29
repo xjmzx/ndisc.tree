@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   Check,
+  Film,
   FolderTree,
   KeyRound,
   LineChart,
@@ -26,6 +27,7 @@ import { DotCluster } from "./components/LeafIcon";
 import { ToolbarIconButton } from "./components/ToolbarIconButton";
 import { StatsView } from "./components/StatsView";
 import { TableView } from "./components/TableView";
+import { VideoCensus } from "./components/VideoCensus";
 import { Section } from "./components/Section";
 import { MirrorControls, OrphanStrip } from "./components/MirrorControls";
 import { useMirror } from "./lib/useMirror";
@@ -192,7 +194,9 @@ export default function App() {
   // reclaiming its width for the Library; both collapsed ⇒ full-width Library.
   // (Replaces the old 3-way switcher.) Persisted.
   // Main view — the library work area, or the stats page (ndisc's pattern).
-  const [view, setView] = useState<"library" | "stats" | "table">("library");
+  const [view, setView] = useState<
+    "library" | "stats" | "table" | "video"
+  >("library");
   const [leftCollapsed, setLeftCollapsed] = usePersistedBool(
     "afqc-tauri.leftCollapsed",
     false,
@@ -654,6 +658,14 @@ export default function App() {
           </ToolbarIconButton>
           <ToolbarIconButton
             tone="digital"
+            pressed={view === "video"}
+            title={view === "video" ? "Back to library" : "Video types (verify / normalize)"}
+            onClick={() => setView((v) => (v === "video" ? "library" : "video"))}
+          >
+            <Film size={14} />
+          </ToolbarIconButton>
+          <ToolbarIconButton
+            tone="digital"
             pressed={view === "stats"}
             title={view === "stats" ? "Back to library" : "Library quality stats"}
             onClick={() => setView((v) => (v === "stats" ? "library" : "stats"))}
@@ -681,6 +693,8 @@ export default function App() {
         <StatsView counts={counts} />
       ) : view === "table" ? (
         <TableView report={report} />
+      ) : view === "video" ? (
+        <VideoCensus root={report?.root ?? root} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-4">
         {/* Slim top strip — Source (scan config) and Destination (sample

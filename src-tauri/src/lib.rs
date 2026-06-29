@@ -493,6 +493,221 @@ async fn count_audio_files(root: String) -> Result<AudioCount, String> {
     .map_err(|e| e.to_string())?
 }
 
+// ---- video classification (verify types for the Normalize-videos plan) ----
+//
+// Part A: probe each video's codecs/container/faststart and bucket it. Purely
+// read-only — no file is touched. The buckets map to the eventual remux /
+// transcode actions; this census lets the user see what they have first.
+
+#[derive(Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "camelCase")]
+enum VideoBucket {
+    /// h264 + (aac|mp3|none) in an mp4/m4v with faststart — plays as-is.
+    Plays,
+    /// h264 + playable audio, but wrong container or moov-at-end → `-c copy +faststart`.
+    Remux,
+    /// h264 but non-playable audio → `-c:v copy -c:a aac +faststart`.
+    AudioFix,
+    /// Legacy video codec (mpeg/avi/…) → full libx264/aac transcode.
+    Transcode,
+    /// ffprobe failed / no video stream.
+    Unknown,
+}
+
+struct VideoProbe {
+    vcodec: Option<String>,
+    acodec: Option<String>,
+}
+
+/// One ffprobe call listing every stream's `codec_type,codec_name`; takes the
+/// first real video stream (skipping attached-cover image codecs) and the first
+/// audio stream.
+fn probe_video(path: &Path) -> Option<VideoProbe> {
+    let mut cmd = Command::new("ffprobe");
+    cmd.args([
+        "-v", "error",
+        "-show_entries", "stream=codec_type,codec_name",
+        "-of", "csv=p=0",
+    ])
+    .arg(path);
+    match run_with_timeout(cmd, Duration::from_secs(FFPROBE_TIMEOUT_SECS)) {
+        RunOutcome::Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let img = ["mjpeg", "mjpegb", "png", "bmp", "gif"];
+            let mut vcodecs: Vec<String> = Vec::new();
+            let mut acodec: Option<String> = None;
+            for line in s.lines() {
+                let mut it = line.splitn(2, ',');
+                let kind = it.next().unwrap_or("").trim();
+                let name = it.next().unwrap_or("").trim();
+                if name.is_empty() {
+                    continue;
+                }
+                match kind {
+                    "video" => vcodecs.push(name.to_string()),
+                    "audio" if acodec.is_none() => acodec = Some(name.to_string()),
+                    _ => {}
+                }
+            }
+            // Prefer a non-image video stream (cover art shows as mjpeg/png).
+            let vcodec = vcodecs
+                .iter()
+                .find(|c| !img.contains(&c.as_str()))
+                .or_else(|| vcodecs.first())
+                .cloned();
+            Some(VideoProbe { vcodec, acodec })
+        }
+        _ => None,
+    }
+}
+
+/// True if an ISO-BMFF file (mp4/m4v/mov) has its `moov` atom before `mdat`
+/// (i.e. faststart). Reads only top-level box headers — cheap. Non-ISO
+/// containers return false (they need a transcode regardless).
+fn mp4_faststart(path: &Path) -> bool {
+    use std::io::{Seek, SeekFrom};
+    let Ok(mut f) = fs::File::open(path) else {
+        return false;
+    };
+    let mut pos: u64 = 0;
+    loop {
+        if f.seek(SeekFrom::Start(pos)).is_err() {
+            return false;
+        }
+        let mut hdr = [0u8; 8];
+        if f.read_exact(&mut hdr).is_err() {
+            return false;
+        }
+        let mut size = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]) as u64;
+        let typ = [hdr[4], hdr[5], hdr[6], hdr[7]];
+        let mut header_len = 8u64;
+        if size == 1 {
+            // 64-bit largesize follows the type.
+            let mut ext = [0u8; 8];
+            if f.read_exact(&mut ext).is_err() {
+                return false;
+            }
+            size = u64::from_be_bytes(ext);
+            header_len = 16;
+        }
+        match &typ {
+            b"moov" => return true,
+            b"mdat" => return false,
+            _ => {}
+        }
+        if size < header_len {
+            return false; // malformed or size-0 (box-to-EOF) before any moov
+        }
+        pos = match pos.checked_add(size) {
+            Some(p) => p,
+            None => return false,
+        };
+    }
+}
+
+fn video_bucket(
+    ext: &str,
+    vcodec: &Option<String>,
+    acodec: &Option<String>,
+    faststart: bool,
+) -> VideoBucket {
+    let Some(v) = vcodec.as_deref() else {
+        return VideoBucket::Unknown;
+    };
+    let mp4ish = matches!(ext, "mp4" | "m4v");
+    let audio_ok = match acodec.as_deref() {
+        None => true, // no audio stream — video-only, still fine
+        Some(a) => matches!(a, "aac" | "mp3"),
+    };
+    if v == "h264" {
+        if audio_ok {
+            if mp4ish && faststart {
+                VideoBucket::Plays
+            } else {
+                VideoBucket::Remux
+            }
+        } else {
+            VideoBucket::AudioFix
+        }
+    } else {
+        VideoBucket::Transcode
+    }
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VideoRow {
+    path: String,
+    vcodec: Option<String>,
+    acodec: Option<String>,
+    container: String,
+    faststart: bool,
+    bucket: VideoBucket,
+}
+
+/// Walk the root, probe every video file, and bucket it. Read-only census for
+/// the Normalize-videos plan — nothing is modified.
+#[tauri::command]
+async fn classify_videos(root: String) -> Result<Vec<VideoRow>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root_pb = PathBuf::from(&root);
+        if !root_pb.is_dir() {
+            return Err(format!("not a directory: {root}"));
+        }
+        let files: Vec<PathBuf> = WalkDir::new(&root_pb)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && has_video_ext(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect();
+
+        let worker_count = available_parallelism()
+            .ok()
+            .map(|n| (n.get() / 2).max(2))
+            .unwrap_or(2);
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let rows: Vec<VideoRow> = pool.install(|| {
+            files
+                .par_iter()
+                .map(|p| {
+                    let ext = p
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .map(|x| x.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    let probe = probe_video(p);
+                    let (vcodec, acodec) = match &probe {
+                        Some(pr) => (pr.vcodec.clone(), pr.acodec.clone()),
+                        None => (None, None),
+                    };
+                    let faststart = matches!(ext.as_str(), "mp4" | "m4v" | "mov")
+                        && mp4_faststart(p);
+                    let bucket = if probe.is_none() {
+                        VideoBucket::Unknown
+                    } else {
+                        video_bucket(&ext, &vcodec, &acodec, faststart)
+                    };
+                    VideoRow {
+                        path: p.to_string_lossy().into_owned(),
+                        vcodec,
+                        acodec,
+                        container: ext,
+                        faststart,
+                        bucket,
+                    }
+                })
+                .collect()
+        });
+        Ok(rows)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MirrorPair {
@@ -1459,6 +1674,7 @@ pub fn run() {
             nip98_sign_event,
             publish_file_metadata,
             count_audio_files,
+            classify_videos,
             create_mirror_tree,
             load_report,
             save_report,

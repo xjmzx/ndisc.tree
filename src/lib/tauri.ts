@@ -60,6 +60,30 @@ export async function scanLibrary(
   return invoke<ScanReport>("scan_library", { root, workers: workers ?? null });
 }
 
+// --- video classification (verify types for the Normalize-videos plan) ---
+
+export type VideoBucket =
+  | "plays"
+  | "remux"
+  | "audioFix"
+  | "transcode"
+  | "unknown";
+
+export interface VideoRow {
+  path: string;
+  vcodec: string | null;
+  acodec: string | null;
+  container: string;
+  faststart: boolean;
+  bucket: VideoBucket;
+}
+
+/** Read-only census: probe every video under `root` and bucket it (plays /
+ *  remux / audioFix / transcode). Nothing is modified. */
+export async function classifyVideos(root: string): Promise<VideoRow[]> {
+  return invoke<VideoRow[]>("classify_videos", { root });
+}
+
 export async function countAudioFiles(root: string): Promise<AudioCount> {
   return invoke<AudioCount>("count_audio_files", { root });
 }
