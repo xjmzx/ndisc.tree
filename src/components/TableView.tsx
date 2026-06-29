@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Search } from "lucide-react";
 import { cn } from "../lib/cn";
 import type { ScanReport, Verdict } from "../lib/tauri";
 
@@ -86,6 +86,7 @@ function compare(a: Flat, b: Flat, key: SortKey, dir: SortDir, numeric: boolean)
 export function TableView({ report }: { report: ScanReport | null }) {
   const [sortKey, setSortKey] = useState<SortKey>("artist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [filter, setFilter] = useState("");
 
   const flat = useMemo<Flat[]>(() => {
     if (!report) return [];
@@ -99,10 +100,22 @@ export function TableView({ report }: { report: ScanReport | null }) {
     }));
   }, [report]);
 
+  // Substring filter over artist / release / file, applied before sort.
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return flat;
+    return flat.filter(
+      (r) =>
+        r.file.toLowerCase().includes(q) ||
+        r.artist.toLowerCase().includes(q) ||
+        r.release.toLowerCase().includes(q),
+    );
+  }, [flat, filter]);
+
   const sorted = useMemo(() => {
     const numeric = !!COLUMNS.find((c) => c.key === sortKey)?.numeric;
-    return [...flat].sort((a, b) => compare(a, b, sortKey, sortDir, numeric));
-  }, [flat, sortKey, sortDir]);
+    return [...filtered].sort((a, b) => compare(a, b, sortKey, sortDir, numeric));
+  }, [filtered, sortKey, sortDir]);
 
   // --- virtualization ---
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -119,11 +132,11 @@ export function TableView({ report }: { report: ScanReport | null }) {
     return () => ro.disconnect();
   }, []);
 
-  // Reset to the top when the sort or the underlying scan changes.
+  // Reset to the top whenever the visible list changes (sort / filter / scan).
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
     setScrollTop(0);
-  }, [sortKey, sortDir, flat]);
+  }, [sorted]);
 
   const total = sorted.length;
   const start = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
@@ -143,9 +156,25 @@ export function TableView({ report }: { report: ScanReport | null }) {
   return (
     <div className="rounded-xl bg-panel border border-surface/60 shadow-md flex flex-col min-h-0 h-full overflow-hidden">
       <div className="flex items-center gap-3 px-4 py-1.5 shrink-0 border-b border-surface/60 text-xs">
-        <span className="text-muted">
-          {report ? `${flat.length} files` : "no scan"}
+        <span className="text-muted shrink-0">
+          {!report
+            ? "no scan"
+            : filter.trim()
+              ? `${sorted.length} of ${flat.length} files`
+              : `${flat.length} files`}
         </span>
+        <div className="relative ml-auto w-56">
+          <Search
+            size={12}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
+          />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter artist / release / file…"
+            className="w-full pl-7 pr-2 py-1 rounded bg-surface/60 text-[12px] placeholder:text-muted/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+          />
+        </div>
       </div>
 
       <div
