@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=ndisc.tree
+Name=ntree
 GenericName=FLAC Library Quality Browser
 Comment=Browse a FLAC library and detect lossy-source files via spectral analysis (formerly FLAC Library Browser)
 Exec=@BINDIR@/ndisc-tree
