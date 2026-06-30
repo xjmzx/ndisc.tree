@@ -545,7 +545,7 @@ export default function App() {
   }, [report, filteredRows, libRoot, anyFilter]);
 
   return (
-    <div className="h-screen p-6 max-w-[1400px] mx-auto flex flex-col gap-4">
+    <div className="h-screen p-6 max-w-[1500px] mx-auto flex flex-col gap-4">
       <header className="shrink-0 rounded-lg bg-panel border border-surface/60
                          px-4 py-3 flex md:grid md:grid-cols-[1fr_auto_1fr]
                          items-start gap-4">
